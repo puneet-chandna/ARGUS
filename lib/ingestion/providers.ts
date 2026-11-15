@@ -6,15 +6,25 @@ import { FIELDS, type Box, type Candidate, type Field, type PageRead, type Reade
 
 const SARVAM = "https://api.sarvam.ai/doc-ai/v1/job";
 const NVIDIA = "https://integrate.api.nvidia.com/v1/chat/completions";
+const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
 const MODELS = {
   sarvam: "sarvam-vision-v1",
   "nvidia-super-vl": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "gemini-flash": "gemini-3.8-flash",
+  "nvidia-mistral": "mistralai/mistral-large-4-1t-a52b",
 } as const;
 const SUPER_VL_RETURNED_MODEL = "private/nvidia/nemotron-3.5-super-120b-a12b";
 const SUPER_VL_OPTIONS = {
   temperature: 0, max_tokens: 6500, chat_template_kwargs: { enable_thinking: false },
 };
-export const READERS: Reader[] = ["sarvam", "nvidia-super-vl"];
+const MISTRAL_OPTIONS = { temperature: 0, max_tokens: 6500, reasoning_effort: "low" };
+const GEMINI_OPTIONS = { temperature: 0, maxOutputTokens: 12000, thinkingConfig: { thinkingLevel: "low" } };
+
+export const READER_LANES = [
+  ["sarvam", "gemini-flash", "nvidia-mistral"],
+  ["nvidia-super-vl"],
+] as const;
+export type BudgetedReader = "sarvam" | "gemini-flash";
 export const EXTRACTION_VERSION = "brokerage-page-v2";
 
 const PROMPT = [
@@ -76,8 +86,8 @@ function parseJson(text: string): unknown {
   }
 }
 
-async function request(url: string, init: RequestInit, deadline: AbortSignal): Promise<unknown> {
-  const timeout = AbortSignal.timeout(30_000);
+async function request(url: string, init: RequestInit, deadline: AbortSignal, timeoutMs = 30_000): Promise<unknown> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   try {
     const response = await fetch(url, {
       ...init, redirect: "error",
@@ -138,14 +148,17 @@ function structured(reader: Reader, model: string, page: number, payload: unknow
   };
 }
 
-function superVl(response: unknown, page: number, legacy: boolean) {
-  const { choices, model = MODELS["nvidia-super-vl"] } = object(response);
-  if (model !== MODELS["nvidia-super-vl"] && model !== SUPER_VL_RETURNED_MODEL) throw new ReaderError("unexpected_model");
+function chatRead(reader: "nvidia-super-vl" | "nvidia-mistral", response: unknown, page: number, legacy: boolean) {
+  const { choices, model = MODELS[reader] } = object(response);
+  if (typeof model !== "string" || (model !== MODELS[reader] &&
+      !(reader === "nvidia-super-vl" && model === SUPER_VL_RETURNED_MODEL))) {
+    throw new ReaderError("unexpected_model");
+  }
   const choice = object(Array.isArray(choices) ? choices[0] : null);
   if (choice.finish_reason !== "stop") throw new ReaderError("incomplete_generation");
   const { content } = object(choice.message);
   if (typeof content !== "string") throw new ReaderError("invalid_provider_response");
-  return structured("nvidia-super-vl", model, page, parseJson(content.trim().replace(/^```json\s*([\s\S]+?)\s*```$/i, "$1")), legacy);
+  return structured(reader, model, page, parseJson(content.trim().replace(/^```json\s*([\s\S]+?)\s*```$/i, "$1")), legacy);
 }
 
 function endpoint() {
@@ -159,13 +172,24 @@ function endpoint() {
 }
 
 export function cacheKey(reader: Reader, image: Uint8Array) {
+  const routes = {
+    sarvam: SARVAM,
+    "nvidia-super-vl": process.env.ARGUS_NVIDIA_ENDPOINT || NVIDIA,
+    "nvidia-mistral": NVIDIA,
+    "gemini-flash": GEMINI,
+  };
+  const options = {
+    sarvam: SARVAM_SCHEMA,
+    "nvidia-super-vl": [PROMPT, SCHEMA, SUPER_VL_OPTIONS],
+    "nvidia-mistral": [PROMPT, SCHEMA, MISTRAL_OPTIONS],
+    "gemini-flash": [PROMPT, SCHEMA, GEMINI_OPTIONS],
+  };
   return createHash("sha256").update([
-    reader === "sarvam" ? SARVAM : process.env.ARGUS_NVIDIA_ENDPOINT || NVIDIA, reader, MODELS[reader], EXTRACTION_VERSION, "image/png",
-    reader === "sarvam" ? JSON.stringify(SARVAM_SCHEMA) : JSON.stringify([PROMPT, SCHEMA, SUPER_VL_OPTIONS]),
+    routes[reader], reader, MODELS[reader], EXTRACTION_VERSION, "image/png", JSON.stringify(options[reader]),
   ].join("|") + "|").update(image).digest("hex");
 }
 
-function legacyKey(reader: Reader, image: Uint8Array) {
+function legacyKey(reader: "sarvam" | "nvidia-super-vl", image: Uint8Array) {
   const name = reader === "sarvam" ? reader : "nvidia-vision-json-v1";
   return createHash("sha256").update(`${name}|${MODELS[reader]}|literal-page-v1|image/png|`).update(image).digest("hex");
 }
@@ -173,10 +197,13 @@ function legacyKey(reader: Reader, image: Uint8Array) {
 export async function cached(reader: Reader, page: number, image: Uint8Array): Promise<PageRead | undefined> {
   const directory = process.env.ARGUS_OCR_CACHE_DIR;
   if (!directory) return;
-  for (const [key, legacy] of [[cacheKey(reader, image), false], [legacyKey(reader, image), true]] as const) {
+  const keys: [string, boolean][] = [[cacheKey(reader, image), false]];
+  if (reader === "sarvam" || reader === "nvidia-super-vl") keys.push([legacyKey(reader, image), true]);
+  for (const [key, legacy] of keys) {
     try {
       const payload = parseJson(await readFile(join(directory, `${key}.json`), "utf8"));
-      return reader === "sarvam" ? structured(reader, MODELS[reader], page, payload, legacy) : superVl(payload, page, legacy);
+      return reader === "sarvam" || reader === "gemini-flash"
+        ? structured(reader, MODELS[reader], page, payload, legacy) : chatRead(reader, payload, page, legacy);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new ReaderError("invalid_cache_entry");
     }
@@ -196,35 +223,72 @@ async function saveCached(reader: Reader, image: Buffer, payload: unknown) {
   }
 }
 
-export function assertLiveConfiguration() {
-  if (process.env.ARGUS_ENABLE_OCR !== "1") throw new ReaderError("ocr_disabled");
-  if (process.env.ARGUS_SARVAM_CREDIT_ONLY !== "1" || process.env.ARGUS_NVIDIA_FREE_ONLY !== "1") {
-    throw new ReaderError("zero_spend_access_unverified");
+export function liveKey(reader: Reader) {
+  return reader === "sarvam" ? process.env.SARVAM_API_KEY?.trim()
+    : reader === "gemini-flash" ? process.env.GEMINI_API_KEY?.trim() : process.env.NVIDIA_API_KEY?.trim();
+}
+
+export function liveOcrStatus() {
+  if (!liveKey("nvidia-super-vl")) return "ocr_not_configured";
+  try {
+    endpoint();
+    return "ready";
+  } catch {
+    return "ocr_invalid_endpoint";
   }
-  if (!process.env.SARVAM_API_KEY || !process.env.NVIDIA_API_KEY) throw new ReaderError("ocr_not_configured");
-  endpoint();
 }
 
 export async function readLive(reader: Reader, page: number, image: Buffer, deadline: AbortSignal): Promise<PageRead> {
-  if (reader === "nvidia-super-vl") {
-    const result = await request(endpoint(), {
+  const key = liveKey(reader);
+  if (!key) throw new ReaderError("ocr_not_configured");
+  if (reader === "gemini-flash") {
+    const { candidates, modelVersion } = object(await request(GEMINI, {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`, "Content-Type": "application/json" },
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: MODELS[reader], ...SUPER_VL_OPTIONS,
+        contents: [{ role: "user", parts: [
+          { text: PROMPT },
+          { inlineData: { mimeType: "image/png", data: image.toString("base64") } },
+        ] }],
+        generationConfig: { ...GEMINI_OPTIONS, responseMimeType: "application/json", responseJsonSchema: SCHEMA },
+      }),
+    }, deadline));
+    if (modelVersion !== undefined && (typeof modelVersion !== "string" || !/^gemini-3\.8-flash(?:-\d+)?$/.test(modelVersion))) {
+      throw new ReaderError("unexpected_model");
+    }
+    const candidate = object(Array.isArray(candidates) ? candidates[0] : null);
+    if (candidate.finishReason !== "STOP") throw new ReaderError("incomplete_generation");
+    const { parts } = object(candidate.content);
+    if (!Array.isArray(parts)) throw new ReaderError("invalid_provider_response");
+    const payload = parseJson(parts.map(part => {
+      const { text, thought } = object(part);
+      return !thought && typeof text === "string" ? text : "";
+    }).join(""));
+    const read = structured(reader, MODELS[reader], page, payload, false);
+    await saveCached(reader, image, payload).catch(() => {});
+    return read;
+  }
+
+  if (reader !== "sarvam") {
+    const superVl = reader === "nvidia-super-vl";
+    const result = await request(superVl ? endpoint() : NVIDIA, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODELS[reader], ...(superVl ? SUPER_VL_OPTIONS : MISTRAL_OPTIONS),
         messages: [{ role: "user", content: [
           { type: "text", text: `${PROMPT}\nReturn only JSON matching: ${JSON.stringify(SCHEMA)}` },
           { type: "image_url", image_url: { url: `data:image/png;base64,${image.toString("base64")}` } },
         ] }],
       }),
-    }, deadline);
-    const read = superVl(result, page, false);
+    }, deadline, superVl ? 30_000 : 65_000);
+    const read = chatRead(reader, result, page, false);
     await saveCached(reader, image, result).catch(() => {});
     return read;
   }
 
   const signal = AbortSignal.any([AbortSignal.timeout(75_000), deadline]);
-  const headers = { "api-subscription-key": process.env.SARVAM_API_KEY! };
+  const headers = { "api-subscription-key": key };
   const data = new FormData();
   data.set("file", new Blob([new Uint8Array(image)], {type: "image/png"}), "page.png");
   data.set("schema", JSON.stringify(SARVAM_SCHEMA));

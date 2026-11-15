@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { decide, type FieldDecision, type Confirmation, type PageRead, type Reader } from "./facts.ts";
-import { assertLiveConfiguration, cached, EXTRACTION_VERSION, readLive, ReaderError, READERS } from "./providers.ts";
+import { cached, EXTRACTION_VERSION, liveKey, readLive, ReaderError, READER_LANES, type BudgetedReader } from "./providers.ts";
 
 export { canonical, CLARIFIABLE, decide } from "./facts.ts";
 export type { Confirmation, Evidence, FieldDecision, PageRead, Reader } from "./facts.ts";
-export type ReservePage = (reader: Reader, page: number) => Promise<boolean>;
+export type ReservePage = (reader: BudgetedReader, page: number) => Promise<boolean>;
 
 export type Extraction = {
   filename: string;
@@ -108,34 +108,59 @@ export function extract(
     const halted = new Map<Reader, string>();
     let nextPage = 1;
 
-    async function read(reader: Reader, number: number, image: Buffer) {
-      try {
-        const hit = await cached(reader, number, image);
-        if (hit) {
-          reads.push(hit);
-          return;
+    async function read(lane: typeof READER_LANES[number], number: number, image: Buffer) {
+      let failure = "cloud_not_authorized";
+      for (const reader of lane) {
+        try {
+          const hit = await cached(reader, number, image);
+          if (hit) {
+            reads.push(hit);
+            return;
+          }
+        } catch (error) {
+          failure = errorCode(error);
         }
-        if (!allowCloud) throw new ReaderError("cloud_not_authorized");
-        assertLiveConfiguration();
-        if (!reserve) throw new ReaderError("quota_not_configured");
-        if (deadline.aborted) throw new ReaderError("ocr_deadline");
-        const priorFailure = halted.get(reader);
-        if (priorFailure) throw new ReaderError(priorFailure);
-        if (!await reserve(reader, number)) throw new ReaderError("quota_budget_exhausted");
-        if (deadline.aborted) throw new ReaderError("ocr_deadline");
-        reads.push(await readLive(reader, number, image, deadline));
-      } catch (error) {
-        const code = errorCode(error);
-        if (HALT.has(code)) halted.set(reader, code);
-        (failures[number] ??= {})[reader] = code;
       }
+      if (allowCloud) {
+        for (const reader of lane) {
+          if (deadline.aborted) {
+            failure = "ocr_deadline";
+            break;
+          }
+          if (!liveKey(reader)) {
+            failure = "ocr_not_configured";
+            continue;
+          }
+          const priorFailure = halted.get(reader);
+          if (priorFailure) {
+            failure = priorFailure;
+            continue;
+          }
+          try {
+            if (reader === "sarvam" || reader === "gemini-flash") {
+              if (!reserve) throw new ReaderError("quota_not_configured");
+              const reserved = await reserve(reader, number).catch(() => {
+                throw new ReaderError("quota_not_configured");
+              });
+              if (!reserved) throw new ReaderError("quota_budget_exhausted");
+              if (deadline.aborted) throw new ReaderError("ocr_deadline");
+            }
+            reads.push(await readLive(reader, number, image, deadline));
+            return;
+          } catch (error) {
+            failure = errorCode(error);
+            if (HALT.has(failure)) halted.set(reader, failure);
+          }
+        }
+      }
+      (failures[number] ??= {})[lane[0]] = failure;
     }
 
-    // Both providers run in parallel per page. Keep at most one active page per reader.
+    // Read each page independently in two lanes. Only the first usable reader counts in each lane.
     while (nextPage <= count && !deadline.aborted) {
       const number = nextPage++;
       const image = await renderPage(file, number);
-      await Promise.all(READERS.map(reader => read(reader, number, image)));
+      await Promise.all(READER_LANES.map(lane => read(lane, number, image)));
     }
     for (let page = nextPage; page <= count; page++) {
       failures[page] = {"sarvam": "ocr_deadline", "nvidia-super-vl": "ocr_deadline"};

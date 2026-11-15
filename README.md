@@ -65,7 +65,9 @@ Requires **Node.js 24**, **Poppler** (`pdfinfo` and `pdftoppm`), and a Supabase 
 
 For public signup, enable it in Supabase Auth, set **Site URL** to your app origin and allow the exact `<origin>/auth/confirm` redirect. Set up [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp) for public confirmation emails.
 
-OCR starts in cache-only mode. Set `ARGUS_OCR_CACHE_DIR` to replay compatible private page responses. To enable fresh Sarvam Vision and NVIDIA Super VL requests, verify authorized zero-spend access for both providers, set the flags and keys in [.env.example](.env.example), and set the verified request limits in `argus_ocr_budget`. Both limits start at zero. Uploaders must explicitly authorize the use of both routes for a synthetic or de-identified policy.
+Set `NVIDIA_API_KEY` for free NVIDIA-hosted OCR. Nemotron Super VL reads each page independently of the second reader. Argus tries Sarvam Vision for the second reading, then Gemini 3.8 Flash, then NVIDIA-hosted Mistral Large 4. Add `SARVAM_API_KEY` and `GEMINI_API_KEY` to use the first two routes. Use a Gemini project on Google’s free tier with billing disabled.
+
+Set Sarvam’s total request limit in `argus_ocr_budget` to match its verified free allowance. It starts at zero. [The fallback migration](supabase/migrations/202611150005_ocr_fallback.sql) caps Gemini at 100 Argus requests per day and resets its counter at midnight Pacific time. NVIDIA requests have no Argus budget. Uploaders must authorize cloud processing for each synthetic or de-identified PDF. Set `ARGUS_OCR_CACHE_DIR` to replay compatible private reads.
 
 </details>
 

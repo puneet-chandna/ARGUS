@@ -116,12 +116,12 @@ test("a synthetic PDF uses its rendered image cache or fails closed with zero ne
   assert.equal(fetch.mock.callCount(), 0);
 });
 
-test("the live transports require durable quota and make at most one submission per missing reader", async t => {
+test("OCR falls back in order without reserving NVIDIA quota", async t => {
   const directory = await mkdtemp(join(tmpdir(), "argus-live-cache-"));
   t.after(() => rm(directory, {recursive: true, force: true}));
   for (const [key, value] of Object.entries({
-    ARGUS_ENABLE_OCR: "1", ARGUS_SARVAM_CREDIT_ONLY: "1", ARGUS_NVIDIA_FREE_ONLY: "1",
-    SARVAM_API_KEY: "test", NVIDIA_API_KEY: "test", ARGUS_OCR_CACHE_DIR: directory, ARGUS_WRITE_OCR_CACHE: "1", ARGUS_NVIDIA_ENDPOINT: "",
+    SARVAM_API_KEY: "test", GEMINI_API_KEY: "test", NVIDIA_API_KEY: "test",
+    ARGUS_OCR_CACHE_DIR: directory, ARGUS_WRITE_OCR_CACHE: "0", ARGUS_NVIDIA_ENDPOINT: "",
   })) {
     const saved = process.env[key];
     process.env[key] = value;
@@ -130,39 +130,77 @@ test("the live transports require durable quota and make at most one submission 
       else process.env[key] = saved;
     });
   }
+
   const {transcript, candidates: fields} = read("sarvam", 1, "998");
+  const response = {transcript, fields};
   const submissions: string[] = [];
+  let sarvamStatus = 200;
+  let geminiStatus = 200;
   const transport = t.mock.method(globalThis, "fetch", async (url: string, options: RequestInit) => {
     assert.equal(options.redirect, "error");
     if (url.endsWith("/extract")) {
       assert.ok(options.body instanceof FormData);
       assert.ok(options.body.get("file") instanceof File);
       submissions.push("sarvam");
-      return Response.json({job_id: "synthetic-job", status: "completed"});
+      return Response.json({job_id: "synthetic-job", status: "completed"}, {status: sarvamStatus});
     }
     if (url.endsWith("/results")) {
       return Response.json({result: {transcript, engine_cc: [null, {value: null, quote: null}, {value: "998", quote: transcript}]}});
     }
-    assert.equal(url, "https://integrate.api.nvidia.com/v1/chat/completions");
     assert.equal(typeof options.body, "string");
     const payload = JSON.parse(options.body as string);
-    assert.equal(payload.model, "nvidia/nemotron-3.5-super-vl-120b-a12b");
-    assert.equal(payload.chat_template_kwargs.enable_thinking, false);
-    submissions.push("nvidia-super-vl");
-    return Response.json({choices: [{finish_reason: "stop", message: {content: JSON.stringify({transcript, fields})}}]});
+    if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+      assert.ok(url.endsWith("/gemini-3.8-flash:generateContent"));
+      assert.equal(payload.contents[0].parts[1].inlineData.mimeType, "image/png");
+      assert.equal(payload.generationConfig.responseMimeType, "application/json");
+      submissions.push("gemini-flash");
+      return Response.json({modelVersion: "gemini-3.8-flash", candidates: [{
+        finishReason: "STOP", content: {parts: [{text: JSON.stringify(response)}]},
+      }]}, {status: geminiStatus});
+    }
+    assert.equal(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    if (payload.model === "nvidia/nemotron-3.5-super-vl-120b-a12b") {
+      assert.equal(payload.chat_template_kwargs.enable_thinking, false);
+      submissions.push("nvidia-super-vl");
+    } else {
+      assert.equal(payload.model, "mistralai/mistral-large-4-1t-a52b");
+      submissions.push("nvidia-mistral");
+    }
+    return Response.json({model: payload.model, choices: [{finish_reason: "stop", message: {content: JSON.stringify(response)}}]});
   });
+
   const pdf = syntheticPdf(transcript);
-  const noQuota = await extract(pdf, "unseen.pdf", true, async () => false);
-  assert.deepEqual(noQuota.reader_failures[1], {sarvam: "quota_budget_exhausted", "nvidia-super-vl": "quota_budget_exhausted"});
-  assert.equal(transport.mock.callCount(), 0);
-  const reserved: [string, number][] = [];
-  const result = await extract(pdf, "unseen.pdf", true, async (reader, page) => {
-    reserved.push([reader, page]);
-    return true;
-  });
-  assert.deepEqual(reserved, [["sarvam", 1], ["nvidia-super-vl", 1]]);
-  assert.deepEqual(submissions.sort(), ["nvidia-super-vl", "sarvam"]);
-  assert.equal(result.fields.engine_cc.value, "998");
+  for (const scenario of [
+    { name: "primary pair", sarvamStatus: 200, geminiStatus: 200, allowed: ["sarvam"], secondary: "sarvam", requests: ["sarvam"] },
+    { name: "Sarvam limit reached", sarvamStatus: 200, geminiStatus: 200, allowed: ["gemini-flash"], secondary: "gemini-flash", requests: ["gemini-flash"] },
+    { name: "Sarvam credits exhausted", sarvamStatus: 402, geminiStatus: 200, allowed: ["sarvam", "gemini-flash"],
+      secondary: "gemini-flash", requests: ["sarvam", "gemini-flash"] },
+    { name: "both caps reached", sarvamStatus: 200, geminiStatus: 200, allowed: [], secondary: "nvidia-mistral", requests: ["nvidia-mistral"] },
+    { name: "Gemini rate limited", sarvamStatus: 200, geminiStatus: 429, allowed: ["gemini-flash"],
+      secondary: "nvidia-mistral", requests: ["gemini-flash", "nvidia-mistral"] },
+  ]) {
+    submissions.length = 0;
+    sarvamStatus = scenario.sarvamStatus;
+    geminiStatus = scenario.geminiStatus;
+    const reservations: string[] = [];
+    const result = await extract(pdf, "unseen.pdf", true, async (reader, page) => {
+      assert.equal(page, 1);
+      assert.ok(reader === "sarvam" || reader === "gemini-flash");
+      reservations.push(reader);
+      return scenario.allowed.includes(reader);
+    });
+    assert.deepEqual(reservations, scenario.secondary === "sarvam" ? ["sarvam"] : ["sarvam", "gemini-flash"], scenario.name);
+    assert.deepEqual(submissions.filter(reader => reader !== "nvidia-super-vl"), scenario.requests, scenario.name);
+    assert.deepEqual(submissions.filter(reader => reader === "nvidia-super-vl"), ["nvidia-super-vl"], scenario.name);
+    assert.deepEqual(result.reader_failures, {}, scenario.name);
+    assert.equal(result.fields.engine_cc.value, "998", scenario.name);
+    assert.deepEqual(result.fields.engine_cc.evidence.map(item => item.reader).sort(),
+      [scenario.secondary, "nvidia-super-vl"].sort(), scenario.name);
+  }
+
+  process.env.ARGUS_WRITE_OCR_CACHE = "1";
+  const live = await extract(pdf, "unseen.pdf", true);
+  assert.deepEqual(live.fields.engine_cc.evidence.map(item => item.reader).sort(), ["nvidia-mistral", "nvidia-super-vl"]);
   const originalCalls = transport.mock.callCount();
   const replay = await extract(pdf, "unseen.pdf", false);
   assert.equal(replay.fields.engine_cc.value, "998");

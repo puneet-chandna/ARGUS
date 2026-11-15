@@ -1,36 +1,15 @@
 import { endpoint, HttpError, json } from "../../../lib/http.ts";
 import { inspectPdf, PdfError } from "../../../lib/ingestion/index.ts";
-import { assertLiveConfiguration, ReaderError, READERS } from "../../../lib/ingestion/providers.ts";
-import type { OcrMode } from "../../../lib/ocr-status.ts";
+import { liveOcrStatus } from "../../../lib/ingestion/providers.ts";
 import { present, runStore } from "../../../lib/runs.ts";
 import { reviewer, serviceClient } from "../../../lib/supabase.ts";
 import { parseUpload, uuid } from "../../../lib/upload.ts";
 
-async function ocrMode(client: ReturnType<typeof serviceClient>): Promise<OcrMode> {
-  const cache = Boolean(process.env.ARGUS_OCR_CACHE_DIR);
-  try {
-    assertLiveConfiguration();
-  } catch (error) {
-    const code = error instanceof ReaderError ? error.message : "ocr_not_configured";
-    if (code === "ocr_disabled" || code === "zero_spend_access_unverified" || code === "ocr_invalid_endpoint") {
-      return { cache, live: code };
-    }
-    return { cache, live: "ocr_not_configured" };
-  }
-
-  const { data, error } = await client.from("argus_ocr_budget").select("reader,used,request_limit")
-    .abortSignal(AbortSignal.timeout(5000));
-  if (error || !data || !READERS.every(reader => data.some(row => row.reader === reader))) {
-    return { cache, live: "quota_not_configured" };
-  }
-  const ready = READERS.every(reader => data.some(row => row.reader === reader && row.used < row.request_limit));
-  return { cache, live: ready ? "ready" : "quota_budget_exhausted" };
-}
-
 export const GET = endpoint(async () => {
   const { user } = await reviewer();
   const client = serviceClient();
-  const [runs, ocr] = await Promise.all([runStore(client, user.id).list(), ocrMode(client)]);
+  const runs = await runStore(client, user.id).list();
+  const ocr = { cache: Boolean(process.env.ARGUS_OCR_CACHE_DIR), live: liveOcrStatus() };
   return json({ runs, ocr });
 });
 

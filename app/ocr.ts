@@ -5,7 +5,7 @@ const reasons: Record<Exclude<OcrMode["live"], "ready">, string> = {
   zero_spend_access_unverified: "The operator still needs to verify zero-spend access for both readers.",
   ocr_not_configured: "Live OCR credentials need to be configured.",
   ocr_invalid_endpoint: "The live OCR endpoint needs to be corrected.",
-  quota_budget_exhausted: "One or both readers have no remaining analysis quota.",
+  quota_budget_exhausted: "An OCR reader has no remaining quota.",
   quota_not_configured: "The quota for live OCR could not be verified.",
 };
 
