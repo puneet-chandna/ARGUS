@@ -1,0 +1,31 @@
+# Local instructions, notes, caches, and secrets
+/AGENTS.md
+/docs/
+/notes/
+/.local/
+.env
+.env.*
+!.env.example
+/uploads/
+
+# Official inputs are downloaded from Vaatun and checked against this manifest.
+/vaatun-starter-bundle/*
+!/vaatun-starter-bundle/MANIFEST.json
+
+# Local prototype, benchmarks, and rate-card import tooling
+/argus/
+/evals/
+/tests/
+/requirements*.txt
+/scripts/*.py
+
+# Generated files
+/node_modules/
+/.next/
+/next-env.d.ts
+*.tsbuildinfo
+/supabase/.temp/
+/.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

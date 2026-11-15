@@ -1,0 +1,524 @@
+{
+  "filename": "pvt-car-comprehensive-reliance.pdf",
+  "checksum": "c96ad51804c7195838f7faca446c068e48604e990be6c9a6d412cf7c0518efbb",
+  "fields": {
+    "insurer": {
+      "value": "Reliance General Insurance Company Limited",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Reliance General Insurance Company Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "policy_type": {
+      "value": "Private Car Package Policy",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Private Car Package Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "rto": {
+      "value": "UP16",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "UP16",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "make": {
+      "value": "Renault",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Renault",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "model": {
+      "value": "Kwid",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Kwid",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "engine_cc": {
+      "value": "999",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "999",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "manufacture_year": {
+      "value": "2020",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2020",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "start_date": {
+      "value": "2025-12-23",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2025-12-23",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "end_date": {
+      "value": "2026-12-22",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2026-12-22",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "current_ncb": {
+      "value": "25",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "25",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "basic_tp_premium": {
+      "value": "2094",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2094",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_od_premium": {
+      "value": "4714",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "4714",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_premium": {
+      "value": "7233",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "7233",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "tax": {
+      "value": "1302",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "1302",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "gross_premium": {
+      "value": "8535",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "8535",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "previous_insurer": {
+      "value": "Reliance General Insurance Company Ltd.",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 13,
+          "raw": "Reliance General Insurance Company Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "previous_ncb": {
+      "value": "20",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 13,
+          "raw": "20",
+          "method": "manual_source_verification"
+        }
+      ]
+    }
+  },
+  "input_mode": "manually_verified_policy_facts",
+  "clarifications": [],
+  "od": {
+    "status": "ambiguous",
+    "reason": "The workbook does not establish that the supplied rate applied on the policy start date.",
+    "rate": null,
+    "applicable": true
+  },
+  "tp": {
+    "status": "unsupported",
+    "reason": "The old-business grid has an STP column and no package TP rate.",
+    "rate": null,
+    "applicable": true
+  },
+  "trace": [
+    {
+      "step": "insurer: Reliance General Insurance Company Limited",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Reliance General Insurance Company Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "policy type: Private Car Package Policy",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Private Car Package Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "rto: UP16",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "UP16",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "make: Renault",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Renault",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "model: Kwid",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Kwid",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "engine cc: 999",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "999",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "manufacture year: 2020",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2020",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "start date: 2025-12-23",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2025-12-23",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "end date: 2026-12-22",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2026-12-22",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "current ncb: 25",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "25",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "basic tp premium: 2094",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2094",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net od premium: 4714",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "4714",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net premium: 7233",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "7233",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "tax: 1302",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "1302",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "gross premium: 8535",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "8535",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "previous insurer: Reliance General Insurance Company Ltd.",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 13,
+          "raw": "Reliance General Insurance Company Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "previous ncb: 20",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 13,
+          "raw": "20",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "Business type: renewal",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Reliance General Insurance Company Limited",
+          "method": "manual_source_verification"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 13,
+          "raw": "Reliance General Insurance Company Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "The old-business grid has an STP column and no package TP rate.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "A1:H2"
+        }
+      ]
+    },
+    {
+      "step": "The RTO maps to Delhi, NORTH.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "RTO List",
+          "cells": "A1253:E1253"
+        }
+      ]
+    },
+    {
+      "step": "The vehicle is mapped to SMALL. The old-business rate row is selected by region.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "Make Model wise segment",
+          "cells": "A397:C397"
+        }
+      ]
+    },
+    {
+      "step": "The mapped zone and region select payout row 11.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "A11:F11"
+        }
+      ]
+    },
+    {
+      "step": "The workbook is dated February 2026. The private-car sheet title says Jan-26.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "A1"
+        }
+      ]
+    },
+    {
+      "step": "For an eligible policy, the below-1,000 cc footnote reduces OD by five percentage points.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "H3"
+        }
+      ]
+    },
+    {
+      "step": "The workbook does not establish that the supplied rate applied on the policy start date.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "A1"
+        }
+      ]
+    }
+  ],
+  "status": "ambiguous",
+  "rule_version": "ts1-1a07381c1d6a033c",
+  "business_type": "renewal",
+  "confidence": {
+    "level": "low",
+    "reason": "At least one applicable rate is undetermined."
+  }
+}

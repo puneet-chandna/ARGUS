@@ -1,0 +1,576 @@
+{
+  "filename": "pvt-car-comprehensive-hdfc-ergo.pdf",
+  "checksum": "c5d88a11b7341baef97ec531e5239e7afe803877eb31555a82b4bfdd5964ca70",
+  "fields": {
+    "insurer": {
+      "value": "HDFC ERGO General Insurance Company Limited",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "HDFC ERGO General Insurance Company Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "policy_type": {
+      "value": "Private Car Comprehensive Policy",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Private Car Comprehensive Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "rto": {
+      "value": "HR26",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "HR26",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "rto_location": {
+      "value": "Gurgaon",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Gurgaon",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "engine_cc": {
+      "value": "1493",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "1493",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "make": {
+      "value": "Mahindra",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Mahindra",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "model": {
+      "value": "Bolero Neo-N10 (R)",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Bolero Neo-N10 (R)",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "manufacture_year": {
+      "value": "2023",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2023",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "start_date": {
+      "value": "2026-03-29",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2026-03-29",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "end_date": {
+      "value": "2027-03-28",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2027-03-28",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "previous_insurer": {
+      "value": "Tata AIG General Insurance Co. Ltd.",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Tata AIG General Insurance Co. Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "current_ncb": {
+      "value": "35",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "35",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "previous_ncb": {
+      "value": "25",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "25",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "basic_od_premium": {
+      "value": "2433",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2433",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_od_premium": {
+      "value": "8053",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "8053",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "basic_tp_premium": {
+      "value": "3416",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "3416",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_tp_premium": {
+      "value": "3816",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "3816",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_premium": {
+      "value": "11869",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "11869",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "tax": {
+      "value": "2136",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2136",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "gross_premium": {
+      "value": "14005",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "14005",
+          "method": "manual_source_verification"
+        }
+      ]
+    }
+  },
+  "input_mode": "manually_verified_policy_facts",
+  "clarifications": [],
+  "od": {
+    "status": "ambiguous",
+    "reason": "A verified eligible private-car GWP is missing. A verified fuel in the HDFC classification is missing.",
+    "rate": null,
+    "applicable": true
+  },
+  "tp": {
+    "status": "unsupported",
+    "reason": "The package grid publishes an OD rate only.",
+    "rate": null,
+    "applicable": true
+  },
+  "trace": [
+    {
+      "step": "insurer: HDFC ERGO General Insurance Company Limited",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "HDFC ERGO General Insurance Company Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "policy type: Private Car Comprehensive Policy",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Private Car Comprehensive Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "rto: HR26",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "HR26",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "rto location: Gurgaon",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Gurgaon",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "engine cc: 1493",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "1493",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "make: Mahindra",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Mahindra",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "model: Bolero Neo-N10 (R)",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Bolero Neo-N10 (R)",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "manufacture year: 2023",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2023",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "start date: 2026-03-29",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2026-03-29",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "end date: 2027-03-28",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2027-03-28",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "previous insurer: Tata AIG General Insurance Co. Ltd.",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Tata AIG General Insurance Co. Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "current ncb: 35",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "35",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "previous ncb: 25",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "25",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "basic od premium: 2433",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2433",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net od premium: 8053",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "8053",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "basic tp premium: 3416",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "3416",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net tp premium: 3816",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "3816",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net premium: 11869",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "11869",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "tax: 2136",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2136",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "gross premium: 14005",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "14005",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "Business type: rollover",
+      "sources": [
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "HDFC ERGO General Insurance Company Limited",
+          "method": "manual_source_verification"
+        },
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "Tata AIG General Insurance Co. Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "The package grid publishes an OD rate only.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Zone 1 and Zone 2 Package rate columns"
+        }
+      ]
+    },
+    {
+      "step": "Mapped RTO HR26 through Haryana to Zone 2.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 2,
+          "row": "Geography, North — Haryana (Zone-2)"
+        }
+      ]
+    },
+    {
+      "step": "The source slab uses comprehensive plus SAOD private-car GWP, excluding SATP. The policy's net OD premium alone does not establish this input.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Slab footnote immediately below Zone 2"
+        }
+      ]
+    },
+    {
+      "step": "A verified fuel in the HDFC classification is missing.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Non Petrol and EV/Hybrid footnotes"
+        }
+      ]
+    },
+    {
+      "step": "A verified eligible private-car GWP is missing. A verified fuel in the HDFC classification is missing.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Zone 2, Package category and fuel/NCB headers"
+        }
+      ]
+    }
+  ],
+  "status": "ambiguous",
+  "rule_version": "ts1-1a07381c1d6a033c",
+  "business_type": "rollover",
+  "confidence": {
+    "level": "low",
+    "reason": "At least one applicable rate is undetermined."
+  }
+}

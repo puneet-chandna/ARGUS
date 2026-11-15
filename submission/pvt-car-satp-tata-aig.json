@@ -1,0 +1,524 @@
+{
+  "filename": "pvt-car-satp-tata-aig.pdf",
+  "checksum": "ec180dc9dfa947ccd388a08b2350988b490551072b52878c998a14a7c5e24249",
+  "fields": {
+    "insurer": {
+      "value": "Tata AIG General Insurance Company Limited",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "Tata AIG General Insurance Company Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "policy_type": {
+      "value": "Liability Only Policy",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "Liability Only Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "start_date": {
+      "value": "2026-04-01",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "2026-04-01",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "end_date": {
+      "value": "2027-03-31",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "2027-03-31",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "vehicle_class": {
+      "value": "private_car",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "private_car",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "rto": {
+      "value": "DL9C",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "DL9C",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "rto_location": {
+      "value": "Delhi",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "Delhi",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "make": {
+      "value": "Maruti",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "Maruti",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "model": {
+      "value": "Zen Estilo",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "Zen Estilo",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "engine_cc": {
+      "value": "998",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "998",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "fuel": {
+      "value": "CNG",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "CNG",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "manufacture_year": {
+      "value": "2011",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "2011",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "basic_tp_premium": {
+      "value": "2094",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "2094",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_premium": {
+      "value": "2154",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "2154",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "tax": {
+      "value": "388",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "388",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "gross_premium": {
+      "value": "2542",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "2542",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "previous_insurer": {
+      "value": "Tata AIG General Insurance Co. Ltd.",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 11,
+          "raw": "Tata AIG General Insurance Co. Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    }
+  },
+  "input_mode": "manually_verified_policy_facts",
+  "clarifications": [],
+  "od": {
+    "status": "inapplicable",
+    "reason": "Stand-alone TP policy.",
+    "rate": null,
+    "applicable": false
+  },
+  "tp": {
+    "status": "unsupported",
+    "reason": "The supplied grid has no usable mapping from this make/model to its Type or from the RTO to its cluster.",
+    "rate": null,
+    "applicable": true
+  },
+  "trace": [
+    {
+      "step": "insurer: Tata AIG General Insurance Company Limited",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "Tata AIG General Insurance Company Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "policy type: Liability Only Policy",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "Liability Only Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "start date: 2026-04-01",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "2026-04-01",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "end date: 2027-03-31",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "2027-03-31",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "vehicle class: private_car",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "private_car",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "rto: DL9C",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "DL9C",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "rto location: Delhi",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "Delhi",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "make: Maruti",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "Maruti",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "model: Zen Estilo",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "Zen Estilo",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "engine cc: 998",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "998",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "fuel: CNG",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "CNG",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "manufacture year: 2011",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "2011",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "basic tp premium: 2094",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "2094",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net premium: 2154",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "2154",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "tax: 388",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "388",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "gross premium: 2542",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 5,
+          "raw": "2542",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "previous insurer: Tata AIG General Insurance Co. Ltd.",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 11,
+          "raw": "Tata AIG General Insurance Co. Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "Business type: renewal",
+      "sources": [
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 1,
+          "raw": "Tata AIG General Insurance Company Limited",
+          "method": "manual_source_verification"
+        },
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 11,
+          "raw": "Tata AIG General Insurance Co. Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "The workbook has payout rows for this business, fuel and coverage, with separate columns by geographic cluster and rows by Type.",
+      "sources": [
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "F2"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G5:BR5"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G511:L511"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G515:L515"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G519:L519"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G523:L523"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G527:L527"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G531:L531"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G535:L535"
+        }
+      ]
+    },
+    {
+      "step": "The supplied grid has no usable mapping from this make/model to its Type or from the RTO to its cluster.",
+      "sources": [
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "General Guidelines",
+          "cells": "C7:C10"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "A3:E5"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "G5:BR5"
+        }
+      ]
+    }
+  ],
+  "status": "unsupported",
+  "rule_version": "ts1-1a07381c1d6a033c",
+  "business_type": "renewal",
+  "confidence": {
+    "level": "high",
+    "reason": "The supplied source evidence establishes the rate or coverage decision."
+  }
+}

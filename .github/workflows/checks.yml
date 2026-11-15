@@ -1,0 +1,37 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils
+          npm ci
+      - name: Verify the original starter files
+        run: |
+          curl --fail --location --retry 3 --max-time 90 \
+            https://solvetojoin.vaatun.com/downloads/insurance-rater-agent-challenge.zip \
+            --output "$RUNNER_TEMP/vaatun.zip"
+          unzip -n -q "$RUNNER_TEMP/vaatun.zip" -d vaatun-starter-bundle
+          npm run verify:corpus
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

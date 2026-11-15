@@ -1,0 +1,446 @@
+{
+  "filename": "pvt-car-satp-go-digit.pdf",
+  "checksum": "4854e968d2280cb4ca6022b0b385328e14847d059a60bf186edf248df4bd4a26",
+  "fields": {
+    "insurer": {
+      "value": "Go Digit General Insurance Ltd.",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Go Digit General Insurance Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "policy_type": {
+      "value": "Private Car Liability Only Policy",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Private Car Liability Only Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "rto": {
+      "value": "UP78",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "UP78",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "make": {
+      "value": "Hyundai",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Hyundai",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "model": {
+      "value": "Santro New 1.1 MT Corporate",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Santro New 1.1 MT Corporate",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "engine_cc": {
+      "value": "1086",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "1086",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "fuel": {
+      "value": "Petrol",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Petrol",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "registration_year": {
+      "value": "2019",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "2019",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "start_date": {
+      "value": "2026-03-25",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "2026-03-25",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "end_date": {
+      "value": "2027-03-24",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "2027-03-24",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "previous_insurer": {
+      "value": "Go Digit General Insurance Limited",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "Go Digit General Insurance Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "basic_tp_premium": {
+      "value": "3416",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "3416",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "net_premium": {
+      "value": "3466",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "3466",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "tax": {
+      "value": "623.88",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "623.88",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    "gross_premium": {
+      "value": "4089.88",
+      "status": "accepted",
+      "reason": "manual_source_verification",
+      "evidence": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "4089.88",
+          "method": "manual_source_verification"
+        }
+      ]
+    }
+  },
+  "input_mode": "manually_verified_policy_facts",
+  "clarifications": [],
+  "od": {
+    "status": "inapplicable",
+    "reason": "Stand-alone TP policy.",
+    "rate": null,
+    "applicable": false
+  },
+  "tp": {
+    "status": "resolved",
+    "reason": "The matching Max CD2 cell publishes 29.5% TP.",
+    "rate": "29.5",
+    "applicable": true
+  },
+  "trace": [
+    {
+      "step": "insurer: Go Digit General Insurance Ltd.",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Go Digit General Insurance Ltd.",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "policy type: Private Car Liability Only Policy",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Private Car Liability Only Policy",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "rto: UP78",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "UP78",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "make: Hyundai",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Hyundai",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "model: Santro New 1.1 MT Corporate",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Santro New 1.1 MT Corporate",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "engine cc: 1086",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "1086",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "fuel: Petrol",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Petrol",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "registration year: 2019",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "2019",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "start date: 2026-03-25",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "2026-03-25",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "end date: 2027-03-24",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "2027-03-24",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "previous insurer: Go Digit General Insurance Limited",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "Go Digit General Insurance Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "basic tp premium: 3416",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "3416",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "net premium: 3466",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "3466",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "tax: 623.88",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "623.88",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "gross premium: 4089.88",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "4089.88",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "Business type: renewal",
+      "sources": [
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 1,
+          "raw": "Go Digit General Insurance Ltd.",
+          "method": "manual_source_verification"
+        },
+        {
+          "file": "pvt-car-satp-go-digit.pdf",
+          "page": 2,
+          "raw": "Go Digit General Insurance Limited",
+          "method": "manual_source_verification"
+        }
+      ]
+    },
+    {
+      "step": "Mapped UP78 to UP_Bad through the 4WTP column.",
+      "sources": [
+        {
+          "file": "Large Insurance Brokers Mar'26 - Shared.xlsx",
+          "sheet": "4W  RTO",
+          "cells": "B2:C2"
+        },
+        {
+          "file": "Large Insurance Brokers Mar'26 - Shared.xlsx",
+          "sheet": "4W  RTO",
+          "cells": "B1609:C1609"
+        }
+      ]
+    },
+    {
+      "step": "Selected UP_Bad / Petrol>1000 / age All by the SATP row labels.",
+      "sources": [
+        {
+          "file": "Large Insurance Brokers Mar'26 - Shared.xlsx",
+          "sheet": "4W SATP",
+          "cells": "B293:E293"
+        }
+      ]
+    },
+    {
+      "step": "The matching Max CD2 cell publishes 29.5% TP.",
+      "sources": [
+        {
+          "file": "Large Insurance Brokers Mar'26 - Shared.xlsx",
+          "sheet": "4W SATP",
+          "cells": "E2"
+        },
+        {
+          "file": "Large Insurance Brokers Mar'26 - Shared.xlsx",
+          "sheet": "4W SATP",
+          "cells": "B293:E293"
+        }
+      ]
+    }
+  ],
+  "status": "resolved",
+  "rule_version": "ts1-1a07381c1d6a033c",
+  "business_type": "renewal",
+  "confidence": {
+    "level": "high",
+    "reason": "The supplied source evidence establishes the rate or coverage decision."
+  }
+}

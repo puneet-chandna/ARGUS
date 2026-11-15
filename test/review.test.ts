@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { canonical, decide, type PageRead } from "../lib/ingestion/index.ts";
+import { applyRating, clarifyBatch, type Report } from "../lib/report.ts";
+import { conflictFields, reviewFields } from "../lib/review-fields.ts";
+
+function clarify(report: Report, input: {field: string; value: string; page: number}, pages: number) {
+  return clarifyBatch(report, [input], pages);
+}
+
+test("a source-cited review resolves an OCR conflict and retains both readings", () => {
+  const filename = "digit.pdf";
+  const read = (reader: PageRead["reader"], value: string): PageRead => {
+    const quote = `Engine capacity: ${value} cc`;
+    return { reader, page: 1, transcript: quote, model: reader, candidates: [{ field: "engine_cc", value, quote, box: null }] };
+  };
+  const report = applyRating({
+    filename, checksum: "a".repeat(64), extraction_version: "test", reader_failures: {},
+    fields: decide(filename, [read("sarvam", "998"), read("nvidia-super-vl", "1086")]), clarifications: [],
+  });
+  assert.equal(reviewFields(report)[0], "engine_cc");
+  const basics = Object.entries({
+    policy_type: "Liability Only Policy", insurer: "Go Digit", vehicle_class: "private car",
+    fuel: "petrol", rto: "UP78",
+  }).map(([field, value]) => ({field, value, page: 1}));
+  assert.equal(report.status, "ambiguous");
+  assert.throws(() => clarify(report, { field: "engine_cc", value: "1,086 cc", page: 2 }, 1));
+  assert.equal(canonical("engine_cc", "1,086 cc"), "1086");
+  const confirmed = clarifyBatch(report, [...basics, { field: "engine_cc", value: "1,086 cc", page: 1 }], 1);
+  assert.equal(confirmed.status, "resolved");
+  assert.equal(confirmed.tp.rate, "29.5");
+  assert.equal(confirmed.od.applicable, false);
+  assert.equal(confirmed.fields.engine_cc.confirmation?.page, 1);
+  assert.equal(confirmed.fields.engine_cc.evidence.length, 2);
+  assert.throws(() => clarify(confirmed, { field: "engine_cc", value: "998", page: 1 }, 1));
+  assert.deepEqual(reviewFields(confirmed), []);
+});
+
+test("missing OCR can be reviewed from the Tata schedule without inventing a rate", () => {
+  const filename = "tata.pdf";
+  let result = applyRating({
+    filename, checksum: "b".repeat(64), extraction_version: "test", reader_failures: { 1: { sarvam: "ocr_disabled" } },
+    fields: decide(filename, [], false), clarifications: [],
+  });
+  assert.equal(reviewFields(result)[0], "policy_type");
+  assert.deepEqual(result.review_fields, ["policy_type", "insurer"]);
+  const legacy = { ...result, fields: { ...result.fields, policy_type: {
+    value: "compulsory pa cover for owner-driver", status: "confirmed_by_reviewer" as const,
+    reason: "invalid_or_ungrounded", evidence: [],
+  } } };
+  assert.ok(reviewFields(legacy).includes("policy_type"));
+  assert.equal(clarify(legacy, { field: "policy_type", value: "Auto Secure - Liability Only Policy", page: 1 }, 12).od.applicable, false);
+  assert.throws(() => clarify(result, { field: "policy_type", value: "Compulsory PA Cover for Owner-Driver", page: 1 }, 12),
+    /Enter the full policy title/);
+  assert.throws(() => clarify(result, { field: "policy_type", value: "Third-Party Cover", page: 1 }, 12),
+    /Enter the full policy title/);
+  for (const [field, value, page] of [
+    ["policy_type", "Auto Secure - Liability Only Policy", 1],
+    ["insurer", "Tata AIG General Insurance Company Limited", 1],
+    ["vehicle_class", "Private Car", 4], ["rto", "DL9C", 4],
+    ["make", "Maruti", 4], ["model", "Zen Estilo", 4], ["fuel", "CNG", 4],
+    ["previous_insurer", "Tata AIG General Insurance Co. Ltd.", 11],
+  ] as const) result = clarify(result, { field, value, page }, 12);
+  assert.equal(result.status, "unsupported");
+  assert.equal(result.review_fields, undefined);
+  assert.equal(result.od.applicable, false);
+  assert.equal(result.tp.rate, null);
+  assert.match(result.tp.reason, /no usable mapping/);
+  assert.deepEqual(result.fields.rto.confirmation?.page, 4);
+});
+
+test("a batch confirms every conflict together and leaves missing fields alone", () => {
+  const filename = "policy.pdf";
+  const read = (reader: PageRead["reader"], value: string, fuel: string): PageRead => {
+    const quote = `Engine capacity: ${value} cc`;
+    const fuelQuote = `Fuel type: ${fuel}`;
+    return { reader, page: 1, model: reader, transcript: `${quote}\n${fuelQuote}`, candidates: [
+      { field: "engine_cc", value, quote, box: [0.1, 0.2, 0.4, 0.3] },
+      { field: "fuel", value: fuel, quote: fuelQuote, box: null },
+    ] };
+  };
+  const report = applyRating({
+    filename, checksum: "c".repeat(64), extraction_version: "test", reader_failures: {},
+    fields: decide(filename, [read("sarvam", "998", "petrol"), read("nvidia-super-vl", "1086", "diesel")]),
+    clarifications: [],
+  });
+  assert.deepEqual(conflictFields(report), ["fuel", "engine_cc"]);
+  const engine = { field: "engine_cc", value: "1086 cc", page: 1 };
+  const fuel = { field: "fuel", value: "petrol", page: 1 };
+  assert.throws(() => clarifyBatch(report, [engine], 1), /Confirm every OCR conflict/);
+  assert.throws(() => clarifyBatch(report, [engine, engine], 1), /only once/);
+  const confirmed = clarifyBatch(report, [engine, fuel], 1);
+  assert.deepEqual(conflictFields(confirmed), []);
+  assert.equal(confirmed.fields.insurer.value, null);
+  assert.equal(confirmed.fields.engine_cc.evidence[0].box?.[0], 0.1);
+  assert.equal(report.clarifications.length, 0);
+});
+
+test("independent legal insurer headings agree across pages even with partial OCR", () => {
+  const filename = "policy.pdf";
+  const read = (reader: PageRead["reader"], page: number, value: string, quote = value): PageRead => ({
+    reader, page, model: reader, transcript: quote,
+    candidates: [{ field: "insurer", value, quote, box: null }],
+  });
+  const name = "TATA AIG GENERAL INSURANCE COMPANY LIMITED";
+  const first = read("sarvam", 1, name);
+  const second = read("nvidia-super-vl", 5, name);
+  assert.equal(decide(filename, [first, second], false).insurer.status, "accepted");
+  assert.equal(decide(filename, [first], false).insurer.value, null);
+  assert.equal(decide(filename, [first, read(second.reader, 5, name, `Previous insurer: ${name}`)], false).insurer.value, null);
+  const structuredOnly = { ...first, page: second.page, transcript: "No insurer heading transcribed." };
+  assert.equal(decide(filename, [structuredOnly, second], false).insurer.status, "accepted");
+  assert.equal(decide(filename, [{ ...structuredOnly, page: 4 }, second], false).insurer.value, null);
+  assert.equal(decide(filename, [structuredOnly, {
+    ...second, transcript: `Previous insurer: ${name}`,
+  }], false).insurer.value, null);
+});
