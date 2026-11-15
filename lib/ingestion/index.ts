@@ -5,11 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { decide, type FieldDecision, type Confirmation, type PageRead, type Reader } from "./facts.ts";
-import { cached, EXTRACTION_VERSION, liveKey, readLive, ReaderError, READER_LANES, type BudgetedReader } from "./providers.ts";
+import { cached, EXTRACTION_VERSION, liveKey, readLive, ReaderError, READER_LANES } from "./providers.ts";
 
 export { canonical, CLARIFIABLE, decide } from "./facts.ts";
 export type { Confirmation, Evidence, FieldDecision, PageRead, Reader } from "./facts.ts";
-export type ReservePage = (reader: BudgetedReader, page: number) => Promise<boolean>;
 
 export type Extraction = {
   filename: string;
@@ -99,7 +98,7 @@ export function extract(
   pdf: Uint8Array,
   filename: string,
   allowCloud: boolean,
-  reserve?: ReservePage,
+  reserveGemini?: (page: number) => Promise<boolean>,
 ): Promise<Extraction> {
   return withPdf(pdf, async (file, count) => {
     const deadline = AbortSignal.timeout(12 * 60_000);
@@ -120,37 +119,34 @@ export function extract(
         } catch (error) {
           failure = errorCode(error);
         }
-      }
-      if (allowCloud) {
-        for (const reader of lane) {
-          if (deadline.aborted) {
-            failure = "ocr_deadline";
-            break;
+        if (!allowCloud) continue;
+        if (deadline.aborted) {
+          failure = "ocr_deadline";
+          break;
+        }
+        if (!liveKey(reader)) {
+          failure = "ocr_not_configured";
+          continue;
+        }
+        const priorFailure = halted.get(reader);
+        if (priorFailure) {
+          failure = priorFailure;
+          continue;
+        }
+        try {
+          if (reader === "gemini-flash") {
+            if (!reserveGemini) throw new ReaderError("quota_not_configured");
+            const reserved = await reserveGemini(number).catch(() => {
+              throw new ReaderError("quota_not_configured");
+            });
+            if (!reserved) throw new ReaderError("quota_budget_exhausted");
+            if (deadline.aborted) throw new ReaderError("ocr_deadline");
           }
-          if (!liveKey(reader)) {
-            failure = "ocr_not_configured";
-            continue;
-          }
-          const priorFailure = halted.get(reader);
-          if (priorFailure) {
-            failure = priorFailure;
-            continue;
-          }
-          try {
-            if (reader === "sarvam" || reader === "gemini-flash") {
-              if (!reserve) throw new ReaderError("quota_not_configured");
-              const reserved = await reserve(reader, number).catch(() => {
-                throw new ReaderError("quota_not_configured");
-              });
-              if (!reserved) throw new ReaderError("quota_budget_exhausted");
-              if (deadline.aborted) throw new ReaderError("ocr_deadline");
-            }
-            reads.push(await readLive(reader, number, image, deadline));
-            return;
-          } catch (error) {
-            failure = errorCode(error);
-            if (HALT.has(failure)) halted.set(reader, failure);
-          }
+          reads.push(await readLive(reader, number, image, deadline));
+          return;
+        } catch (error) {
+          failure = errorCode(error);
+          if (HALT.has(failure)) halted.set(reader, failure);
         }
       }
       (failures[number] ??= {})[lane[0]] = failure;

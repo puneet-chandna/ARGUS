@@ -116,7 +116,7 @@ test("a synthetic PDF uses its rendered image cache or fails closed with zero ne
   assert.equal(fetch.mock.callCount(), 0);
 });
 
-test("OCR falls back in order without reserving NVIDIA quota", async t => {
+test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
   const directory = await mkdtemp(join(tmpdir(), "argus-live-cache-"));
   t.after(() => rm(directory, {recursive: true, force: true}));
   for (const [key, value] of Object.entries({
@@ -171,25 +171,24 @@ test("OCR falls back in order without reserving NVIDIA quota", async t => {
 
   const pdf = syntheticPdf(transcript);
   for (const scenario of [
-    { name: "primary pair", sarvamStatus: 200, geminiStatus: 200, allowed: ["sarvam"], secondary: "sarvam", requests: ["sarvam"] },
-    { name: "Sarvam limit reached", sarvamStatus: 200, geminiStatus: 200, allowed: ["gemini-flash"], secondary: "gemini-flash", requests: ["gemini-flash"] },
-    { name: "Sarvam credits exhausted", sarvamStatus: 402, geminiStatus: 200, allowed: ["sarvam", "gemini-flash"],
+    { name: "Sarvam works", sarvamStatus: 200, geminiStatus: 200, geminiAvailable: false,
+      secondary: "sarvam", requests: ["sarvam"] },
+    { name: "Sarvam credits exhausted", sarvamStatus: 402, geminiStatus: 200, geminiAvailable: true,
       secondary: "gemini-flash", requests: ["sarvam", "gemini-flash"] },
-    { name: "both caps reached", sarvamStatus: 200, geminiStatus: 200, allowed: [], secondary: "nvidia-mistral", requests: ["nvidia-mistral"] },
-    { name: "Gemini rate limited", sarvamStatus: 200, geminiStatus: 429, allowed: ["gemini-flash"],
-      secondary: "nvidia-mistral", requests: ["gemini-flash", "nvidia-mistral"] },
+    { name: "Gemini daily cap reached", sarvamStatus: 402, geminiStatus: 200, geminiAvailable: false,
+      secondary: "nvidia-mistral", requests: ["sarvam", "nvidia-mistral"] },
+    { name: "Gemini rate limited", sarvamStatus: 402, geminiStatus: 429, geminiAvailable: true,
+      secondary: "nvidia-mistral", requests: ["sarvam", "gemini-flash", "nvidia-mistral"] },
   ]) {
     submissions.length = 0;
     sarvamStatus = scenario.sarvamStatus;
     geminiStatus = scenario.geminiStatus;
-    const reservations: string[] = [];
-    const result = await extract(pdf, "unseen.pdf", true, async (reader, page) => {
-      assert.equal(page, 1);
-      assert.ok(reader === "sarvam" || reader === "gemini-flash");
-      reservations.push(reader);
-      return scenario.allowed.includes(reader);
+    const reservations: number[] = [];
+    const result = await extract(pdf, "unseen.pdf", true, async page => {
+      reservations.push(page);
+      return scenario.geminiAvailable;
     });
-    assert.deepEqual(reservations, scenario.secondary === "sarvam" ? ["sarvam"] : ["sarvam", "gemini-flash"], scenario.name);
+    assert.deepEqual(reservations, scenario.secondary === "sarvam" ? [] : [1], scenario.name);
     assert.deepEqual(submissions.filter(reader => reader !== "nvidia-super-vl"), scenario.requests, scenario.name);
     assert.deepEqual(submissions.filter(reader => reader === "nvidia-super-vl"), ["nvidia-super-vl"], scenario.name);
     assert.deepEqual(result.reader_failures, {}, scenario.name);
@@ -205,4 +204,8 @@ test("OCR falls back in order without reserving NVIDIA quota", async t => {
   const replay = await extract(pdf, "unseen.pdf", false);
   assert.equal(replay.fields.engine_cc.value, "998");
   assert.equal(transport.mock.callCount(), originalCalls);
+
+  sarvamStatus = 200;
+  const recovered = await extract(pdf, "unseen.pdf", true);
+  assert.deepEqual(recovered.fields.engine_cc.evidence.map(item => item.reader).sort(), ["nvidia-super-vl", "sarvam"]);
 });

@@ -24,7 +24,6 @@ export const READER_LANES = [
   ["sarvam", "gemini-flash", "nvidia-mistral"],
   ["nvidia-super-vl"],
 ] as const;
-export type BudgetedReader = "sarvam" | "gemini-flash";
 export const EXTRACTION_VERSION = "brokerage-page-v2";
 
 const PROMPT = [
@@ -252,7 +251,7 @@ export async function readLive(reader: Reader, page: number, image: Buffer, dead
         ] }],
         generationConfig: { ...GEMINI_OPTIONS, responseMimeType: "application/json", responseJsonSchema: SCHEMA },
       }),
-    }, deadline));
+    }, deadline, 65_000));
     if (modelVersion !== undefined && (typeof modelVersion !== "string" || !/^gemini-3\.8-flash(?:-\d+)?$/.test(modelVersion))) {
       throw new ReaderError("unexpected_model");
     }

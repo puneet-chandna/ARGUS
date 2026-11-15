@@ -67,7 +67,7 @@ For public signup, enable it in Supabase Auth, set **Site URL** to your app orig
 
 Set `NVIDIA_API_KEY` for free NVIDIA-hosted OCR. Nemotron Super VL reads each page independently of the second reader. Argus tries Sarvam Vision for the second reading, then Gemini 3.8 Flash, then NVIDIA-hosted Mistral Large 4. Add `SARVAM_API_KEY` and `GEMINI_API_KEY` to use the first two routes. Use a Gemini project on Google’s free tier with billing disabled.
 
-Set Sarvam’s total request limit in `argus_ocr_budget` to match its verified free allowance. It starts at zero. [The fallback migration](supabase/migrations/202611150005_ocr_fallback.sql) caps Gemini at 100 Argus requests per day and resets its counter at midnight Pacific time. NVIDIA requests have no Argus budget. Uploaders must authorize cloud processing for each synthetic or de-identified PDF. Set `ARGUS_OCR_CACHE_DIR` to replay compatible private reads.
+Sarvam runs first when configured and uses the account’s own credits. Argus tries the next reader when Sarvam rejects a request or otherwise fails. [The fallback migration](supabase/migrations/202611150005_ocr_fallback.sql) caps Gemini at 100 Argus requests per day and resets its counter at midnight Pacific time. Only Gemini uses an Argus request budget. Uploaders must authorize cloud processing for each synthetic or de-identified PDF. Set `ARGUS_OCR_CACHE_DIR` to replay compatible private reads.
 
 </details>
 

@@ -3,7 +3,6 @@ import { HttpError } from "./http.ts";
 import { conflictFields } from "./review-fields.ts";
 import type { Report } from "./report.ts";
 import type { Extraction } from "./ingestion/index.ts";
-import type { BudgetedReader } from "./ingestion/providers.ts";
 import { verifiedOcr, verifiedOcrProfile } from "./verified-ocr.ts";
 import { pdfObject, uuid } from "./upload.ts";
 
@@ -128,9 +127,9 @@ export function runStore(client: SupabaseClient, owner: string) {
         verified_extraction: verified.extraction, verified_text: verified.grounded_text,
       }).abortSignal(AbortSignal.timeout(5000));
     },
-    async reserve(claim: Run, reader: BudgetedReader): Promise<boolean> {
+    async reserveGemini(claim: Run): Promise<boolean> {
       const { data, error } = await client.rpc("argus_reserve_ocr", {
-        run_id: claim.id, reviewer_id: owner, claim_revision: claim.revision, reader_name: reader,
+        run_id: claim.id, reviewer_id: owner, claim_revision: claim.revision, reader_name: "gemini-flash",
       }).abortSignal(AbortSignal.timeout(5000));
       if (error) throw error;
       return data === true;
