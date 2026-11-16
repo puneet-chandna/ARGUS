@@ -94,59 +94,10 @@ input:not([type="checkbox"]), select {
   font-weight: 450;
 }
 
-.file-control {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px 20px;
-  min-height: 132px;
-  padding: 24px clamp(16px, 3vw, 32px);
-  border: 1px dashed var(--control-line);
-  border-radius: 14px;
-  background: var(--surface);
-  cursor: pointer;
-  transition: background-color var(--feedback-duration) ease, border-color var(--feedback-duration) ease;
-}
-.file-control > :not(input) { pointer-events: none; }
-.file-control input {
-  position: absolute;
-  inset: 0;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: inherit;
-}
-.file-control:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
-.file-control:has(input:disabled) { cursor: wait; }
-.file-control[data-dragging="true"] { background: var(--accent-soft); border-color: var(--accent); }
-.file-control[data-selected="true"] { border-style: solid; }
-.file-mark {
-  color: var(--control-line);
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transition: color var(--feedback-duration) ease, transform var(--feedback-duration) var(--settle);
-}
-[data-dragging="true"] .file-mark { color: var(--accent); transform: translateY(-4px); }
-[data-selected="true"] .file-mark { color: var(--success); }
-.file-copy { display: grid; gap: 3px; overflow-wrap: anywhere; }
-.file-title { font-size: 1.125rem; }
-.file-limit { color: var(--muted); font-size: .8125rem; font-weight: 500; }
-.file-action {
-  color: var(--accent-hover);
-  font-size: .875rem;
-  text-underline-offset: .28em;
-}
-
 @media (hover: hover) and (pointer: fine) {
   .primary:hover:not(:disabled) { background: var(--accent-hover); }
   .secondary:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
-  .file-control:not(:has(input:disabled)):hover:not([data-dragging="true"]),
-  .history-item:not([aria-current="true"]):hover { background: var(--surface-raised); }
-  .file-control:not(:has(input:disabled)):hover .file-action { text-decoration: underline; }
+
 }
 
 .ocr-mode { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 12px; align-items: baseline; }
@@ -165,21 +116,13 @@ input:not([type="checkbox"]), select {
 .notice { background: var(--warn-soft); color: var(--warn); margin-block: 16px 24px; }
 .loading { color: var(--muted); }
 
-.state { font-size: .8125rem; font-weight: 650; color: var(--muted); }
-.state.resolved { color: var(--success); }
-.state.ambiguous, .state.unsupported { color: var(--warn); }
-.state.failed { color: var(--danger); }
-.state.processing { color: var(--accent-hover); }
-
 @media (max-width: 520px) {
   h1 { font-size: 1.875rem; }
   .masthead { column-gap: 12px; }
   .account { width: 100%; justify-content: space-between; }
-  .file-control { grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; padding: 16px; }
-  .file-action { grid-column: 2; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .button, .history-item, .file-control, .file-mark { transition: none; }
-  .button:active:not(:disabled), [data-dragging="true"] .file-mark { transform: none; }
+  .button { transition: none; }
+  .button:active:not(:disabled) { transform: none; }
 }

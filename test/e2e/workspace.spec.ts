@@ -50,6 +50,7 @@ async function signIn(page: Page, reviewer: Reviewer) {
 
 async function uploadPdf(page: Page, name: string, buffer: Buffer) {
   await page.locator('input[type="file"]').setInputFiles({ name, mimeType: "application/pdf", buffer });
+  await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Analyze policy" }).click();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible({ timeout: 15_000 });

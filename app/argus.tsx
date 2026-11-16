@@ -3,10 +3,12 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import monogram from "./argus-monogram.svg";
+import pixelIris from "./argus-logo-4-pixel-iris-animated.svg";
 import type { DragEvent, FormEvent } from "react";
 import type { OcrMode } from "../lib/ocr-status";
 import { ocrDescription } from "./ocr";
-import { labels, RunResult } from "./report";
+import { RunResult } from "./report";
+import { SavedRun } from "./saved-runs";
 import { AuthEntry, Landing } from "./landing";
 import { RunSettings } from "./run-settings";
 import "./desk.css";
@@ -48,6 +50,7 @@ function showPath(path: string) {
 
 export default function Argus({ initialView }: { initialView: View }) {
   const [view, setView] = useState(initialView);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -170,7 +173,9 @@ export default function Argus({ initialView }: { initialView: View }) {
       {isWorkspace ? <>
         <span className="product">Review workspace</span>
         {session && <div className="account">
-          <span>{session.email}</span>
+          <span title={session.email}>{session.email}</span>
+          <button type="button" className="button secondary open-history" aria-haspopup="dialog"
+            aria-controls="history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}>Saved runs</button>
           <button type="button" className="button secondary" onClick={signOut} disabled={busy}>Sign out</button>
         </div>}
       </> : view === "landing" && <nav className="site-nav" aria-label="Primary">
@@ -185,7 +190,8 @@ export default function Argus({ initialView }: { initialView: View }) {
     </div>}
     <main ref={main} id="main" className="shell" tabIndex={-1}>
       {view === "landing" ? <Landing /> : isWorkspace ?
-        session ? <Workspace key={session.email} onUnauthorized={expireSession} sessionError={error} /> :
+        session ? <Workspace key={session.email} onUnauthorized={expireSession} sessionError={error}
+          historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} /> :
           <p className="loading session-loading" role="status">Opening your workspace…</p> :
         <AuthEntry creatingAccount={creatingAccount} confirmationEmail={confirmationEmail} email={email}
           busy={busy} error={error} headingRef={gateHeading} onEmail={setEmail} onSubmit={authenticate} onSwitch={switchAuthMode} />}
@@ -193,15 +199,22 @@ export default function Argus({ initialView }: { initialView: View }) {
   </div>;
 }
 
-function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => void; sessionError: string }) {
+function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }: {
+  onUnauthorized: () => void; sessionError: string; historyOpen: boolean; setHistoryOpen: (open: boolean) => void;
+}) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [ocr, setOcr] = useState<OcrMode>();
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
+  const choose = useRef<HTMLButtonElement>(null);
+  const drawer = useRef<HTMLDialogElement>(null);
+  const [compact, setCompact] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [fileError, setFileError] = useState("");
+  const [uploadId, setUploadId] = useState<string>();
   const [restart, setRestart] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [decisionFilter, setDecisionFilter] = useState("all");
   const [managed, setManaged] = useState<Run>();
@@ -216,6 +229,31 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
   const pendingUpload = useRef<{ file: File; allowCloud: boolean; key: string } | null>(null);
   const live = useRef(false);
   const onAuthError = useRef(onUnauthorized);
+  const showUpload = Boolean(active && uploadId === active.id && !error &&
+    (!run || run.status === "queued" || (run.status === "processing" &&
+      (processingId === run.id || Date.parse(run.lease_until ?? "") > Date.now()))));
+  const showIntake = showUpload || (!run && (!active || Boolean(error)));
+  const uploading = showUpload || working;
+
+  useEffect(() => {
+    const media = window.matchMedia("(width < 900px)");
+    const update = () => {
+      if (!media.matches) setHistoryOpen(false);
+      setCompact(media.matches);
+    };
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [setHistoryOpen]);
+
+  useEffect(() => {
+    if (compact && historyOpen && !drawer.current?.open) drawer.current?.showModal();
+  }, [compact, historyOpen]);
+
+  function closeHistory() {
+    drawer.current?.close();
+    setHistoryOpen(false);
+  }
 
   useEffect(() => { onAuthError.current = onUnauthorized; }, [onUnauthorized]);
 
@@ -279,17 +317,17 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
   }, [active]);
 
   useEffect(() => {
-    if (run && focusRequested.current === run.id) {
+    if (run && !showUpload && focusRequested.current === run.id) {
       focusRequested.current = "";
       document.getElementById("result")?.focus();
     } else if (!active && focusRequested.current === "intake") {
       focusRequested.current = "";
       document.getElementById("workspace-title")?.focus();
     }
-  }, [active, run]);
+  }, [active, run, showUpload]);
 
   function select(id: string) {
-    setHistoryOpen(false);
+    closeHistory();
     if (selected.current !== id) setRun(null);
     selected.current = id;
     focusRequested.current = id;
@@ -321,20 +359,23 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
       !next.size || next.size > 20 * 1024 * 1024) {
       if (picker.current) picker.current.value = "";
       setFile(null);
-      setError("Choose a nonempty PDF up to 20 MiB.");
+      setConsent(false);
+      setFileError("Choose a nonempty PDF up to 20 MiB.");
       return;
     }
     setFile(next);
+    setConsent(false);
+    setFileError("");
     setError("");
   }
 
-  function dropFile(event: DragEvent<HTMLLabelElement>) {
+  function dropFile(event: DragEvent<HTMLDivElement>) {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     setDragging(false);
-    if (working) return;
+    if (uploading) return;
     if (event.dataTransfer.files.length !== 1) {
-      setError("Drop one PDF at a time.");
+      setFileError("Drop one PDF at a time.");
       return;
     }
     if (picker.current) picker.current.value = "";
@@ -344,11 +385,7 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    if (!file) {
-      setError("Choose a PDF to analyze.");
-      picker.current?.focus();
-      return;
-    }
+    if (!file || !consent || fileError || uploading || !ocr) return;
     const data = new FormData(form);
     data.set("pdf", file);
     const allowCloud = ocr?.live === "ready" && data.get("allowCloud") === "true";
@@ -358,13 +395,19 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
     }
     const key = pendingUpload.current.key;
     await action(async () => {
-      const { run } = await api<{ run: Run }>("/api/runs", {
+      const uploaded = await api<{ run: Run }>("/api/runs", {
         method: "POST", body: data, headers: { "Idempotency-Key": key },
+      }).catch(error => {
+        if (!(error instanceof RequestError) || ![413, 415, 422].includes(error.status)) throw error;
+        if (live.current) setFileError(error.message);
       });
-      if (!live.current) return;
+      if (!uploaded || !live.current) return;
+      const { run } = uploaded;
       pendingUpload.current = null;
       form.reset();
       setFile(null);
+      setConsent(false);
+      setUploadId(run.id);
       select(run.id);
       record(run);
       if (run.status === "queued") await process(run.id);
@@ -391,7 +434,7 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
 
   function newAnalysis() {
     selected.current = "";
-    setHistoryOpen(false);
+    closeHistory();
     focusRequested.current = active ? "intake" : "";
     setActive(null);
     setRun(null);
@@ -400,6 +443,7 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
     if (!active) document.getElementById("workspace-title")?.focus();
   }
 
+  const progress = showUpload ? run?.ocr_progress : undefined;
   const availability = ocr && ocrDescription(ocr);
   const query = historyQuery.trim().toLowerCase();
   const visibleRuns = runs.filter(item => {
@@ -407,54 +451,48 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
     return (item.filename.toLowerCase().includes(query) || item.display_name?.toLowerCase().includes(query)) &&
       (decisionFilter === "all" || status === decisionFilter);
   }).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.created_at.localeCompare(a.created_at));
-  const dateTime = (value: string) => new Date(value).toLocaleString(undefined, {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
+  const history = <>
+    <div className="history-top">
+      <div className="history-heading">
+        <h2 id="history-title">Saved runs</h2>
+        {compact && <button className="button secondary" type="button" onClick={closeHistory}>Close</button>}
+      </div>
+      <button className="button secondary new-analysis" type="button" aria-current={showIntake ? "page" : undefined}
+        disabled={uploading && showIntake} onClick={newAnalysis}>New analysis</button>
+    </div>
+    {runs.length > 0 && <div className="history-controls">
+      <input type="search" aria-label="Search saved runs" value={historyQuery} placeholder="Search runs"
+        onChange={event => setHistoryQuery(event.target.value)} />
+      <div className="decision-control">
+        <select aria-label="Decision" value={decisionFilter} onChange={event => setDecisionFilter(event.target.value)}>
+          <option value="all">All decisions</option>
+          <option value="ambiguous">Needs review</option>
+          <option value="resolved">Resolved</option>
+          <option value="unsupported">Unsupported</option>
+        </select>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+    </div>}
+    {visibleRuns.length > 0 ? <ul className="history-list" aria-label="Saved policy runs">{visibleRuns.map(item =>
+      <SavedRun key={item.id} run={item} current={active?.id === item.id && !showIntake}
+        onOpen={() => {
+          setError("");
+          setUploadId(undefined);
+          select(item.id);
+        }} onManage={() => setManaged(item)} />)}</ul> :
+      <p className="history-empty" role="status">{runs.length ? "No runs match this filter." :
+        historyLoaded ? (ocr ? "Your first analysis will appear here." : "Saved runs are unavailable.") : "Loading saved runs…"}</p>}
+  </>;
+  const submitHint = !ocr ? "Wait for OCR availability." : !file && !consent ? "Choose a PDF and check the box to continue."
+    : !file ? "Choose a PDF to continue." : !consent ? "Check the box to continue."
+    : ocr.live !== "ready" && !ocr.cache ? "Your PDF will be saved. OCR is currently unavailable." : "";
 
   return <div className="workspace">
-    <div className="desk-mobile">
-      <button className="button secondary" type="button" aria-expanded={historyOpen} aria-controls="history"
-        onClick={() => setHistoryOpen(open => !open)}>{historyOpen ? "Hide saved runs" : "Saved runs"}</button>
-      <button className="button primary" type="button" onClick={newAnalysis}>New analysis</button>
-    </div>
-    <aside className="history" id="history" data-open={historyOpen} aria-labelledby="history-title" tabIndex={-1}>
-      <div className="history-top">
-        <h2 id="history-title">Saved runs</h2>
-        <button className="button primary" type="button" onClick={newAnalysis}>New analysis</button>
-      </div>
-      {runs.length > 0 && <div className="history-controls">
-        <label>Search saved runs
-          <input type="search" value={historyQuery} placeholder="Policy filename"
-            onChange={event => setHistoryQuery(event.target.value)} />
-        </label>
-        <label>Decision
-          <select value={decisionFilter} onChange={event => setDecisionFilter(event.target.value)}>
-            <option value="all">All decisions</option>
-            <option value="ambiguous">Needs review</option>
-            <option value="resolved">Resolved</option>
-            <option value="unsupported">Unsupported</option>
-          </select>
-        </label>
-      </div>}
-      {visibleRuns.length > 0 ? <ul className="history-list" tabIndex={0} aria-label="Saved policy runs">{visibleRuns.map(item => {
-        const status = item.decision ?? item.result?.status ?? item.status;
-        const title = item.display_name || item.filename;
-        const activeJob = item.status === "processing" && Date.parse(item.lease_until ?? "") > Date.now();
-        return <li key={item.id} className="history-row" data-current={active?.id === item.id}>
-          <button className="history-item" type="button" aria-current={active?.id === item.id ? "true" : undefined}
-            onClick={() => { setError(""); select(item.id); }}>
-            <strong>{title}</strong>
-            <span className="run-meta"><span className={`state ${status}`}>{item.deleting_at ? "Deletion pending" : labels[status]}</span>
-              <time dateTime={item.created_at}>{dateTime(item.created_at)}</time>
-              {item.pinned && <span className="run-pin">Pinned</span>}
-            </span>
-          </button>
-          <button type="button" className="history-manage" aria-label={`Manage ${title}, ${dateTime(item.created_at)}`}
-            disabled={activeJob} onClick={() => setManaged(item)}><span aria-hidden="true">⋯</span></button>
-        </li>;
-      })}</ul> : <p className="history-empty" role="status">{runs.length ? "No runs match this filter." :
-        historyLoaded ? (ocr ? "Your first analysis will appear here." : "Saved runs are unavailable.") : "Loading saved runs…"}</p>}
-    </aside>
+    {compact ? <dialog ref={drawer} className="history history-drawer" id="history" aria-labelledby="history-title"
+      onClose={() => setHistoryOpen(false)}>{history}</dialog> :
+      <aside className="history history-desktop" id="history" aria-labelledby="history-title" tabIndex={-1}>{history}</aside>}
     <div className="work" id="work" tabIndex={-1}>
       {(error || sessionError) && <div className="error workspace-error">
         <p role="alert">{error || sessionError}</p>
@@ -477,58 +515,80 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
           if (selected.current === managed.id) newAnalysis();
           else document.getElementById("history")?.focus();
         }} />}
-      {run ? <RunResult key={run.id} run={run} working={working} processing={processingId === run.id}
+      {!showIntake && run ? <RunResult key={run.id} run={run} working={working} processing={processingId === run.id}
         onProcess={() => action(() => process(run.id))} onConfirm={(value) => confirm(run.id, value)} /> :
-        active && !error ? <p className="loading" role="status">Opening saved run…</p> :
+        !showIntake ? <p className="loading" role="status">Opening saved run…</p> :
         <section className="intake" aria-labelledby="workspace-title">
           <header className="intake-heading">
             <h1 id="workspace-title" tabIndex={-1}>New analysis</h1>
             <p>Check own damage and third-party commission against the insurer’s rate card.</p>
           </header>
-          <form className="upload" onSubmit={upload} aria-busy={working}>
-            <label className="file-control" htmlFor="policy-pdf" data-dragging={dragging} data-selected={Boolean(file)}
-              onDragOver={event => {
-                if (!event.dataTransfer.types.includes("Files")) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = working ? "none" : "copy";
-                if (!working) setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)} onDrop={dropFile}>
-              <input ref={picker} id="policy-pdf" name="pdf" type="file" accept=".pdf,application/pdf"
-                aria-labelledby="pdf-picker-label" aria-describedby="pdf-limit pdf-selection" disabled={working}
-                onChange={event => chooseFile(event.target.files?.[0] ?? null)} />
-              <svg className="file-mark" viewBox="0 0 32 36" width="32" height="36" aria-hidden="true" focusable="false">
-                <path d="M6 2h13l7 7v23a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm13 0v7h7" />
-                {file ? <path d="m10 21 4 4 7-8" /> : <path d="M10 17h10m-10 6h7" />}
-              </svg>
-              <span className="file-copy" aria-live="polite" aria-atomic="true">
-                <strong className="file-title" id="pdf-selection">{file?.name ?? "Drop a motor policy PDF here"}</strong>
-                <span className="file-limit" id="pdf-limit">{file ? `${Math.max(1, Math.ceil(file.size / 1024)).toLocaleString()} KiB` : "PDF up to 20 MiB"}</span>
-              </span>
-              <span className="file-action" id="pdf-picker-label">{file ? "Replace PDF" : "Choose PDF"}</span>
-            </label>
-            <div className="ocr-mode" data-mode={ocr?.live === "ready" ? "live" : "limited"}>
-              <span className="signal" aria-hidden="true" />
-              <div>
-                <strong>{availability?.title ?? (historyLoaded ? "OCR status unknown" : "Checking OCR availability…")}</strong>
-                {availability && <p>{availability.detail}</p>}
+          <form className="upload" onSubmit={upload} aria-busy={uploading}>
+            <fieldset disabled={uploading}>
+              <div className="file-control" data-dragging={dragging} data-selected={Boolean(file)} data-error={Boolean(fileError)}
+                onDragOver={event => {
+                  if (!event.dataTransfer.types.includes("Files")) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = uploading ? "none" : "copy";
+                  if (!uploading) setDragging(true);
+                }}
+                onDragLeave={event => {
+                  if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+                }} onDrop={dropFile}>
+                <input ref={picker} id="policy-pdf" name="pdf" type="file" accept=".pdf,application/pdf" hidden
+                  aria-label="Choose PDF" onChange={event => chooseFile(event.target.files?.[0] ?? null)} />
+                {uploading ? <div className="upload-progress" role="status">
+                  <Image src={pixelIris} alt="" width={96} height={96} unoptimized />
+                  <p>{progress ? `${progress.completed} of ${progress.total} ${progress.total === 1 ? "page" : "pages"} checked` : "Analyzing your policy…"}</p>
+                </div> : <>
+                  <button ref={choose} type="button" className="file-picker" onClick={() => picker.current?.click()}
+                    aria-label={file ? "Replace PDF" : "Choose PDF"}
+                    aria-describedby={fileError ? "pdf-selection pdf-limit pdf-error" : "pdf-selection pdf-limit"}>
+                    <svg className="file-mark" viewBox="0 0 32 36" width="48" height="48" aria-hidden="true">
+                      <path d="M6 2h13l7 7v23a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm13 0v7h7" />
+                      {file ? <path d="m10 21 4 4 7-8" /> : <path d="M10 17h10m-10 6h7" />}
+                    </svg>
+                    <span className="file-copy" aria-live="polite" aria-atomic="true">
+                      <strong className="file-title" id="pdf-selection">{file?.name ?? "Drop a motor policy PDF here"}</strong>
+                      <span className="file-limit" id="pdf-limit">{file ? `${Math.max(1, Math.ceil(file.size / 1024)).toLocaleString()} KiB` : "PDF up to 20 MiB"}</span>
+                    </span>
+                    <span className="button secondary">{file ? "Replace PDF" : "Choose PDF"}</span>
+                  </button>
+                  {file && <button className="button secondary remove-file" type="button" onClick={() => {
+                    if (picker.current) picker.current.value = "";
+                    setFile(null);
+                    setConsent(false);
+                    setFileError("");
+                    setError("");
+                    choose.current?.focus();
+                  }}>Remove</button>}
+                  {fileError && <p id="pdf-error" className="file-error" role="alert">{fileError}</p>}
+                </>}
               </div>
-            </div>
-            {ocr?.live === "ready" && <label className="consent">
-              <input name="allowCloud" type="checkbox" value="true" disabled={working} />
-              <span>This PDF is synthetic or de-identified and approved for processing by external OCR services.</span>
-            </label>}
-            <div className="form-actions">
-              <button className="button primary" type="submit" disabled={working}>
-                {working ? "Saving PDF…" : ocr && !ocr.cache && ocr.live !== "ready" ? "Save policy PDF" : "Analyze policy"}
-              </button>
-              {file && !working && <button className="button secondary" type="button" onClick={() => {
-                if (picker.current) picker.current.value = "";
-                setFile(null);
-                setError("");
-                picker.current?.focus();
-              }}>Clear file</button>}
-            </div>
+              <p className="intake-value">You get the commission rate, the exact grid cell it came from, or a clear 'cannot determine'.</p>
+              <div className="upload-consent">
+                <div className="ocr-mode" data-mode={ocr?.live === "ready" ? "live" : "limited"}>
+                  <span className="signal" aria-hidden="true" />
+                  <div>
+                    <strong>{availability?.title ?? (historyLoaded ? "OCR status unknown" : "Checking OCR availability…")}</strong>
+                    {availability && <p>{availability.detail}</p>}
+                  </div>
+                </div>
+                {ocr && <label className="consent">
+                  <input name={ocr.live === "ready" ? "allowCloud" : undefined} type="checkbox" value="true" checked={consent}
+                    onChange={event => setConsent(event.target.checked)} />
+                  <span>{ocr.live === "ready" ? "This PDF is synthetic or de-identified and approved for processing by external OCR services."
+                    : "I confirm I’m authorized to save this PDF in the workspace."}</span>
+                </label>}
+                <div className="form-actions">
+                  <button className="button primary" type="submit" aria-describedby={submitHint && !uploading ? "submit-hint" : undefined}
+                    disabled={uploading || !ocr || !file || !consent || Boolean(fileError)}>
+                    {uploading ? "Analyzing policy…" : "Analyze policy"}
+                  </button>
+                  {!uploading && submitHint && <p id="submit-hint">{submitHint}</p>}
+                </div>
+              </div>
+            </fieldset>
           </form>
         </section>}
     </div>

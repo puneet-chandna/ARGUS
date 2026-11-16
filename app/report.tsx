@@ -62,7 +62,8 @@ export type Run = {
 type Clarification = { field: string; value: string; page: number };
 export type ReviewSubmission = { confirmations: Clarification[]; revision: number; guided?: true };
 
-export const labels = {
+const labels = {
+  deleting: "Deletion pending",
   queued: "Queued",
   processing: "Analyzing",
   complete: "Completed",
@@ -71,6 +72,26 @@ export const labels = {
   ambiguous: "Needs review",
   unsupported: "Unsupported",
 };
+
+const statusIcons = {
+  resolved: "m3 8 3 3 7-7",
+  ambiguous: "M8 4v4m0 3v.5",
+  unsupported: "m5 5 6 6m0-6-6 6",
+  failed: "M8 4v4m0 3v.5",
+} as const;
+
+export function RunStatus({ status }: { status: keyof typeof labels }) {
+  return <span className={`state ${status}`}>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="7" />
+      {status in statusIcons && <path d={statusIcons[status as keyof typeof statusIcons]} />}
+    </svg>
+    {labels[status]}
+  </span>;
+}
+
+export const runRateLabel = (rate: number | string) => `${rate}%`;
 
 const fieldLabels: Record<string, string> = {
   engine_cc: "Engine capacity",
@@ -439,7 +460,7 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
 function Commission({ label, abbreviation, part, sharedReason }: {
   label: string; abbreviation: string; part: Rate; sharedReason: boolean;
 }) {
-  const rate = part.rate != null ? `${part.rate}%` : part.applicable === false
+  const rate = part.rate != null ? runRateLabel(part.rate) : part.applicable === false
     ? "Inapplicable" : part.status === "unsupported" ? "Unsupported" : "Undetermined";
   return <div className="run-coverage" data-status={part.status}>
     <dt><span className="run-coverage-code">{abbreviation}</span>{label}</dt>
@@ -587,7 +608,7 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
       <div className="run-heading">
         <h1 id="result-title">{run.display_name || run.filename}</h1>
         {run.display_name && <p className="run-original-name">{run.filename}</p>}
-        <p className={`run-state run-state-${status}`} role="status">{run.deleting_at ? "Deletion pending" : labels[status]}</p>
+        <p className="run-state" role="status"><RunStatus status={run.deleting_at ? "deleting" : status} /></p>
       </div>
       {!run.deleting_at && <a className="button secondary run-open-original" href={pdf} target="_blank" rel="noreferrer" aria-label="Open original PDF in a new tab">
         Open original PDF

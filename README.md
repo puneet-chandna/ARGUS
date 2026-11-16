@@ -2,11 +2,8 @@
   <img src="app/argus-monogram.svg" alt="" width="84" height="84" />
   <h1>Argus</h1>
   <p><strong>Motor policy brokerage, with the evidence behind every decision.</strong></p>
-  <p>A reviewer workspace for the Vaatun Insurance Rater Agent Challenge.</p>
-  <p>
-    <a href="https://github.com/puneet-chandna/ARGUS/actions/workflows/checks.yml"><img src="https://github.com/puneet-chandna/ARGUS/actions/workflows/checks.yml/badge.svg" alt="Repository checks" /></a>
-    <a href="https://render.com/deploy?repo=https://github.com/puneet-chandna/ARGUS"><img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" /></a>
-  </p>
+  <p>Argus (Auditable Rate Grid Understanding System): the hundred-eyed agent that reads motor policies and resolves brokerage commission rates, citing the exact grid cell behind every answer.</p>
+  
   <p>
     <a href="#sample-results">Sample results</a> ·
     <a href="#run-locally">Run locally</a> ·
@@ -45,20 +42,7 @@ flowchart LR
 - **Private history.** Supabase Storage keeps the original PDF. Postgres keeps the result, evidence, and job state. The Next.js API checks ownership before serving either artifact. Both survive new sessions and container replacement. Interrupted jobs can resume from the saved PDF once their lease expires.
 - **Reuse.** A repeat upload can reuse verified OCR and saved corrections for the same reviewer and PDF bytes. A reviewer can recalculate from saved facts without making another OCR request.
 
-## Run locally
 
-Requires **Node.js 24**, **Poppler** (`pdfinfo` and `pdftoppm`), and a Supabase project. The [Dockerfile](Dockerfile) includes Poppler.
-
-1. Apply the [Supabase migrations](supabase/migrations) in filename order. Enable email auth and provision a confirmed reviewer under **Authentication → Users**.
-2. Copy [.env.example](.env.example) to `.env.local` and fill in the three Supabase values.
-
-   ```sh
-   cp .env.example .env.local
-   npm ci
-   npm run dev
-   ```
-
-3. Open [localhost:3000](http://localhost:3000), sign in, and choose **New analysis**. The default limit is 20 MiB and 20 pages per unencrypted PDF.
 
 <details>
 <summary>Configure email signup or live OCR</summary>
@@ -71,29 +55,6 @@ Sarvam runs first when configured and uses the account’s own credits. Argus tr
 
 </details>
 
-## Verify
-
-Run the same checks as [GitHub Actions](.github/workflows/checks.yml). The source PDFs and workbooks come directly from Vaatun and are verified against the pinned manifest.
-
-```sh
-curl -fL https://solvetojoin.vaatun.com/downloads/insurance-rater-agent-challenge.zip -o /tmp/vaatun-starter.zip
-unzip -n -q /tmp/vaatun-starter.zip -d vaatun-starter-bundle
-npm ci
-npm run verify:corpus
-npm run typecheck
-npm test
-npm run build
-```
-
-`npm test` runs deterministic rating, OCR, and review tests without network calls. For API and browser tests, point `ARGUS_TEST_URL`, `ARGUS_TEST_SUPABASE_URL` and `ARGUS_TEST_SUPABASE_SECRET` to a running local app and disposable Supabase project with all migrations applied.
-
-```sh
-npm run test:integration
-npx playwright install chromium
-npm run test:e2e
-```
-
-The integration suite covers account isolation, retries, PDF integrity, and confirmed-field reuse. Playwright covers uploads, conflict review, citations, and reopening a private PDF after signing out and back in. Both use synthetic PDFs and run without live OCR.
 
 ## Deploy to Render
 

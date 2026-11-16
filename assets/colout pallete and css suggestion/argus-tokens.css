@@ -1,0 +1,93 @@
+/* Argus design tokens. Scales generated in OKLCH, anchors are the brand colors. */
+:root {
+  --neutral-50: #F4F1E8;
+  --neutral-100: #E4EDF0;
+  --neutral-200: #CFDADD;
+  --neutral-300: #B4C0C4;
+  --neutral-400: #9AA7AB;
+  --neutral-500: #818F94;
+  --neutral-600: #667479;
+  --neutral-700: #4D5B5F;
+  --neutral-800: #384549;
+  --neutral-900: #243034;
+  --neutral-950: #08242B;
+  --peacock-50: #F1F8FB;
+  --peacock-100: #DEEEF4;
+  --peacock-200: #C0DDE6;
+  --peacock-300: #99C6D4;
+  --peacock-400: #73AFC1;
+  --peacock-500: #5497AB;
+  --peacock-600: #3C7C8D;
+  --peacock-700: #0F5C6E;
+  --peacock-800: #1B4955;
+  --peacock-900: #10333C;
+  --peacock-950: #051E25;
+  --verdigris-50: #EEFAF8;
+  --verdigris-100: #D8F1EF;
+  --verdigris-200: #B3E3DE;
+  --verdigris-300: #82CEC7;
+  --verdigris-400: #4EB8B1;
+  --verdigris-500: #1FA8A0;
+  --verdigris-600: #09837C;
+  --verdigris-700: #046661;
+  --verdigris-800: #034D49;
+  --verdigris-900: #013633;
+  --verdigris-950: #01201E;
+  --gold-50: #FDF6EA;
+  --gold-100: #F8E9D1;
+  --gold-200: #EFD3A8;
+  --gold-300: #F2B544;
+  --gold-400: #CF9A36;
+  --gold-500: #B68106;
+  --gold-600: #946806;
+  --gold-700: #745104;
+  --gold-800: #583D03;
+  --gold-900: #3E2A01;
+  --gold-950: #251801;
+  --rust-50: #FEF4F2;
+  --rust-100: #FEE5DF;
+  --rust-200: #FEC9BD;
+  --rust-300: #FEA28E;
+  --rust-400: #F57C63;
+  --rust-500: #D9553B;
+  --rust-600: #BE432B;
+  --rust-700: #982E19;
+  --rust-800: #76200F;
+  --rust-900: #551306;
+  --rust-950: #360701;
+}
+
+/* Dark theme (default): 60% neutral ground, 30% peacock surfaces, 10% gold accent */
+:root, [data-theme="dark"] {
+  --bg:           var(--neutral-950);
+  --surface:      var(--peacock-900);
+  --surface-2:    var(--peacock-800);
+  --border:       var(--peacock-800);
+  --text:         var(--neutral-50);
+  --text-muted:   var(--neutral-300);
+  --accent:       var(--gold-300);   /* primary action, the cited cell */
+  --on-accent:    var(--neutral-950);
+  --cite-bg:      color-mix(in oklch, var(--gold-300) 16%, transparent);
+  --cite-border:  var(--gold-300);
+  --success:      var(--verdigris-500);  /* resolved rate */
+  --danger:       var(--rust-400);       /* cannot determine, errors */
+  --info:         var(--peacock-400);
+  --focus-ring:   var(--gold-300);
+}
+
+[data-theme="light"] {
+  --bg:           var(--neutral-50);
+  --surface:      var(--peacock-50);
+  --surface-2:    var(--peacock-100);
+  --border:       var(--peacock-200);
+  --text:         var(--neutral-950);
+  --text-muted:   var(--neutral-700);
+  --accent:       var(--peacock-700);
+  --on-accent:    var(--neutral-50);
+  --cite-bg:      var(--gold-100);
+  --cite-border:  var(--gold-500);
+  --success:      var(--verdigris-700);
+  --danger:       var(--rust-700);
+  --info:         var(--peacock-600);
+  --focus-ring:   var(--peacock-700);
+}
