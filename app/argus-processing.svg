@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <style>
+    .letter {
+      stroke-dasharray: 100;
+      animation: draw .9s cubic-bezier(.4, 0, .2, 1) both;
+    }
+    .eye-opening, .eye { transform-box: fill-box; transform-origin: center; }
+    .eye-opening { animation: open .35s .85s cubic-bezier(.2, .9, .3, 1.2) both; }
+    .eye { animation: blink 4.8s 1.25s infinite; }
+    .pupil { animation: glance 4.8s 1.25s infinite; }
+    .bars { animation: appear .4s 1.1s both; }
+    .bars rect { animation: read 2.4s infinite; }
+    .bars rect:nth-child(1) { animation-delay: 1.1s; }
+    .bars rect:nth-child(2) { animation-delay: 1.5s; }
+    .bars rect:nth-child(3) { animation-delay: 1.9s; }
+    @keyframes draw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+    @keyframes open { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    @keyframes blink {
+      0%, 88%, 100% { transform: scaleY(1); }
+      93% { transform: scaleY(.08); }
+    }
+    @keyframes glance {
+      0%, 30%, 78%, 100% { transform: translateX(0); }
+      38%, 50% { transform: translateX(-5px); }
+      58%, 70% { transform: translateX(5px); }
+    }
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes read {
+      0%, 100% { opacity: .4; }
+      25%, 40% { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; }
+    }
+  </style>
+  <rect width="256" height="256" rx="56" fill="#08242B"/>
+  <path class="letter" pathLength="100" d="M64 200 L128 58 L192 200" fill="none" stroke="#F4F1E8"
+    stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <g class="eye-opening">
+    <g class="eye">
+      <path d="M104 152 Q128 130 152 152 Q128 174 104 152Z" fill="#F2B544"/>
+      <circle class="pupil" cx="128" cy="152" r="7" fill="#08242B"/>
+    </g>
+  </g>
+  <g class="bars" fill="#1FA8A0">
+    <rect x="64" y="214" width="34" height="9" rx="4.5"/>
+    <rect x="111" y="214" width="34" height="9" rx="4.5"/>
+    <rect x="158" y="214" width="34" height="9" rx="4.5"/>
+  </g>
+</svg>

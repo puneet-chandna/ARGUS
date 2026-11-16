@@ -1,6 +1,6 @@
 export type Facts = Record<string, string>;
 export type Source = { file: string; page?: number; row?: string; sheet?: string; cells?: string };
-export type TraceStep = { step: string; sources: Source[] };
+export type TraceStep = { step: string; sources: Source[]; policy_fields?: readonly string[] };
 export type Status = "resolved" | "unsupported" | "ambiguous";
 export type Component = {
   applicable: boolean | null;
@@ -17,6 +17,8 @@ export type RatingResult = Parts & {
 };
 
 export const tidy = (value = "") => value.toLowerCase().match(/[a-z0-9]+/g)?.join(" ") ?? "";
+export const vehicleBodyStyle = (value = "") =>
+  /^(?:hatch ?back|sedan|saloon|suv|muv|mpv|coupe|convertible|station wagon)$/.test(tidy(value));
 export const rtoCode = (value = "") => value.toUpperCase().replace(/[\s-]+/g, "");
 export const validRto = (value: string) => /^[A-Z]{2}[0-9]{1,2}[A-Z]?$/.test(value);
 export const integer = (value = "") => /^\d{1,5}$/.test(value.trim()) ? Number(value) : null;

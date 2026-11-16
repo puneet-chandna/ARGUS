@@ -1,7 +1,8 @@
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import monogram from "./argus-monogram.svg";
+import processingMonogram from "./argus-processing.svg";
+import stillMonogram from "./icon.svg";
 import { readerNotice } from "./ocr";
 import { confirmationError, conflictFields, reviewFields } from "../lib/review-fields";
 import "./workspace.css";
@@ -36,6 +37,7 @@ type Report = {
   fields: Record<string, Fact>;
   review_fields?: readonly string[];
   trace: { step: string; sources: Source[] }[];
+  rating_trace_start?: number;
   rule_version?: string;
   reader_failures?: Record<string, Record<string, string>>;
 };
@@ -54,6 +56,7 @@ export type Run = {
   created_at: string;
   revision: number;
   lease_until?: string | null;
+  ocr_progress?: { completed: number; total: number } | null;
 };
 
 type Clarification = { field: string; value: string; page: number };
@@ -95,17 +98,22 @@ function factReason(reason: string) {
     invalid_or_ungrounded: "The reading could not be tied to policy evidence.",
     invalid_coverage_period: "The coverage dates are out of order.",
     premium_totals_disagree: "The printed premium and tax do not reconcile.",
-  } as Record<string, string>)[reason] ?? "No verified value.";
+    vehicle_body_style_only: "The reading describes the body style. Confirm how the vehicle is classified for this policy.",
+  } as Record<string, string>)[reason] ?? "No value could be verified.";
 }
 
-function Citation({ source, pdf }: { source: Source; pdf: string }) {
-  if (source.sheet || source.row != null) {
+function gridSource(source: Source) {
+  return Boolean(source.sheet || source.row != null);
+}
+
+function Citation({ source, pdf, showFile = true }: { source: Source; pdf: string; showFile?: boolean }) {
+  if (gridSource(source)) {
     const location = source.sheet
       ? `${source.sheet}${source.cells ? `!${source.cells}` : ""}`
       : `Page ${source.page} · ${source.row}`;
     return <span className="run-grid-citation">
       <span className="run-location">{location}</span>
-      <span>{source.file}</span>
+      {showFile && <span>{source.file}</span>}
     </span>;
   }
   if (source.page) return <a className="run-policy-link" href={`${pdf}#page=${source.page}`} target="_blank" rel="noreferrer"
@@ -115,9 +123,21 @@ function Citation({ source, pdf }: { source: Source; pdf: string }) {
 
 function Sources({ items, pdf }: { items: Source[]; pdf: string }) {
   if (!items.length) return null;
-  return <ul className="run-sources" role="list">{items.map((source, index) => <li key={index}>
-    {source.quote && <blockquote>{source.quote}</blockquote>}
-    <Citation source={source} pdf={pdf} />
+  const groups = new Map<string, Source[]>();
+  for (const source of items) {
+    const citation = JSON.stringify([source.file, source.page, source.sheet, source.cells, source.row]);
+    const key = gridSource(source) ? `grid:${source.file}` : source.quote?.trim().toLowerCase().replace(/\s+/g, " ") || citation;
+    const group = groups.get(key) ?? [];
+    const duplicate = group.some(item => item.file === source.file && item.page === source.page &&
+      item.sheet === source.sheet && item.cells === source.cells && item.row === source.row);
+    if (!duplicate) group.push(source);
+    groups.set(key, group);
+  }
+  return <ul className="run-sources" role="list">{[...groups].map(([key, group]) => <li key={key}>
+    {group[0].quote && <blockquote>{group[0].quote}</blockquote>}
+    {gridSource(group[0]) && <p className="run-grid-file">{group[0].file}</p>}
+    <div className="run-citation-links">{group.map((source, index) =>
+      <Citation key={index} source={source} pdf={pdf} showFile={false} />)}</div>
   </li>)}</ul>;
 }
 
@@ -384,22 +404,74 @@ function Commission({ label, abbreviation, part, sharedReason }: {
   </div>;
 }
 
-function Facts({ entries, pdf, filename, onReview, reviewable }: {
-  entries: [string, Fact][]; pdf: string; filename: string; onReview?: (field: string) => void; reviewable?: readonly string[];
-}) {
+function Facts({ entries, pdf, filename }: { entries: [string, Fact][]; pdf: string; filename: string }) {
   return <dl className="run-fact-list">{entries.map(([field, fact]) => <div key={field} className="run-fact">
     <dt>{fieldName(field)}</dt>
     <dd>
       {fact.value != null ? <strong>{fact.value}</strong> : factReason(fact.reason)}
       {fact.confirmation && <p className="run-source-note">Reviewer confirmed on <Citation source={{ file: filename, page: fact.confirmation.page }} pdf={pdf} /></p>}
-      {onReview && reviewable?.includes(field) && <button className="button secondary run-fact-action" type="button"
-        onClick={() => onReview(field)}>{fact.reason === "conflicting_readings" ? "Resolve" : "Verify"} {fieldName(field).toLowerCase()}</button>}
-      {!onReview && <Sources items={fact.evidence} pdf={pdf} />}
+      <Sources items={fact.evidence} pdf={pdf} />
     </dd>
   </div>)}</dl>;
 }
 
+function Trace({ steps, pdf }: { steps: Report["trace"]; pdf: string }) {
+  return <ol className="run-trace" role="list">{steps.map((step, index) => <li key={index}>
+    <span aria-hidden="true" className="run-trace-index">{index + 1}</span>
+    <div>
+      <p>{step.step}</p>
+      <Sources items={step.sources} pdf={pdf} />
+    </div>
+  </li>)}</ol>;
+}
+
 type Panel = "trace" | "facts";
+
+function AnalysisProgress({ progress }: { progress: Run["ocr_progress"] }) {
+  const [motionPaused, setMotionPaused] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(preference.matches);
+    update();
+    preference.addEventListener("change", update);
+    return () => preference.removeEventListener("change", update);
+  }, []);
+  const rating = progress && progress.completed === progress.total;
+  const title = rating ? "Checking commission rates" : "Reading the policy";
+  const status = progress
+    ? `${progress.completed} of ${progress.total} ${progress.total === 1 ? "page" : "pages"} checked`
+    : "Preparing pages for analysis";
+  const stages = ["PDF saved", "Check policy pages", "Calculate commission"];
+  const currentStage = rating ? 2 : 1;
+
+  return <section className="analysis-progress" aria-labelledby="analysis-progress-title">
+    <div className="analysis-status">
+      <Image className="run-processing-mark" src={motionPaused || reducedMotion ? stillMonogram : processingMonogram}
+        alt="" width={76} height={76} unoptimized loading="eager" />
+      <div>
+        <h2 id="analysis-progress-title">{title}</h2>
+        <p role="status">{status}</p>
+      </div>
+    </div>
+    <progress className="run-progress" aria-label="Policy pages checked"
+      value={progress?.completed} max={progress?.total} />
+    <ol className="analysis-stages" aria-label="Analysis steps">
+      {stages.map((stage, index) => <li key={stage} aria-current={index === currentStage ? "step" : undefined}
+        data-complete={index < currentStage}>
+        <span className="analysis-stage-mark" aria-hidden="true" />
+        {index < currentStage && <span className="sr-only">Complete. </span>}
+        {stage}
+      </li>)}
+    </ol>
+    <footer className="analysis-footer">
+      <p>You can open another run. This analysis continues in the background.</p>
+      <button type="button" className="analysis-motion-control" onClick={() => setMotionPaused(paused => !paused)}>
+        {motionPaused ? "Resume logo animation" : "Pause logo animation"}
+      </button>
+    </footer>
+  </section>;
+}
 
 export function RunResult({ run, working, processing, onProcess, onConfirm }: {
   run: Run;
@@ -419,11 +491,17 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
   const notice = readerNotice(report?.reader_failures);
   const facts = Object.entries(report?.fields ?? {});
   const confirmed = facts.filter(([, fact]) => fact.value != null);
-  const unresolved = facts.filter(([, fact]) => fact.value == null);
+
   const reviewable = report && !run.deleting_at ? reviewFields(report) : [];
   const conflicts = report && !run.deleting_at ? conflictFields(report) : [];
   const blockers = report?.review_fields ?? reviewable.filter(field => field === "policy_type" || field === "insurer");
   const missing = blockers.filter(field => reviewable.some(name => name === field) && !conflicts.some(name => name === field));
+  const required = [...conflicts, ...missing];
+  const extraEvidence = facts.filter(([field, fact]) => fact.value == null && fact.evidence.length > 0 && !required.includes(field));
+  const optional = reviewable.filter(field => !required.includes(field));
+  const traceStart = report?.rating_trace_start ?? 0;
+  const decisions = report?.trace.slice(traceStart) ?? [];
+  const policyTrace = report?.trace.slice(0, traceStart) ?? [];
   const [reviewQueue, setReviewQueue] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Clarification>>({});
   const [confirmationMessage, setConfirmationMessage] = useState("");
@@ -431,12 +509,11 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
 
   function openReview(field?: string) {
     setConfirmationMessage("");
-    setReviewQueue([...new Set([...(field ? [field] : []), ...conflicts, ...(!field && !conflicts.length ? missing : []),
-      ...Object.keys(drafts)])]);
+    setReviewQueue([...new Set([...(field ? [field] : []), ...required, ...Object.keys(drafts)])]);
   }
 
   const tabs: { id: Panel; text: string; count: number }[] = [
-    { id: "trace", text: "Decision trace", count: report?.trace.length ?? 0 },
+    { id: "trace", text: "Decision trace", count: decisions.length },
     { id: "facts", text: "Policy facts", count: confirmed.length },
   ];
   const activePanel = panel;
@@ -480,16 +557,39 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
           <Commission label="Third party" abbreviation="TP" part={report.tp} sharedReason={sharedReason} />
         </dl>
         {sharedReason && <p className="run-shared-reason">{report.od.reason}</p>}
-        <p className="run-confidence"><strong>{report.confidence.level} confidence.</strong> {report.confidence.reason}</p>
+        <div className="run-confidence">
+          <p><strong>{report.confidence.level} confidence.</strong> {report.confidence.reason}</p>
+          {decisions.length > 0 && <button type="button" className="run-evidence-link" onClick={() => {
+            activateTab("trace");
+            tabButtons.current.trace?.scrollIntoView({ block: "start" });
+          }}>View decision evidence</button>}
+        </div>
       </section>
       {confirmationMessage && <p className="review-confirmed" role="status">{confirmationMessage}</p>}
-      {(conflicts.length > 0 || missing.length > 0) && <aside className="run-review-prompt" aria-label="Reviewer action">
-        <div><strong>{conflicts.length
-          ? `${conflicts.length} OCR ${conflicts.length === 1 ? "conflict" : "conflicts"} to resolve`
-          : `Missing ${missing.map(field => fieldName(field).toLowerCase()).join(", ")}`}</strong>
-          <p>{conflicts.length ? "Compare the readings against the original PDF." : "You can supply these details from the policy schedule."}</p></div>
-        <button type="button" className="button primary" onClick={() => openReview()}>{reviewAction}</button>
-      </aside>}
+      {required.length > 0 && <section className="run-review-prompt" aria-labelledby="required-review-title">
+        <header>
+          <div>
+            <h2 id="required-review-title">{required.length === 1 ? "One policy detail to review" : `${required.length} policy details to review`}</h2>
+            <p>Check these details against the original PDF.</p>
+          </div>
+          <button type="button" className="button primary" onClick={() => openReview()}>{reviewAction}</button>
+        </header>
+        <ul>
+          {required.map(field => {
+            const fact = report.fields[field];
+            const pages = [...new Set(fact?.evidence.flatMap(source => source.page ? [source.page] : []) ?? [])];
+            return <li key={field}>
+              <button type="button" className="run-review-field" onClick={() => openReview(field)}>
+                {fieldName(field)}
+              </button>
+              <p>{factReason(fact?.reason ?? "")}</p>
+              {pages.length > 0 && <div className="run-citation-links">
+                {pages.map(page => <Citation key={page} source={{ file: run.filename, page }} pdf={pdf} />)}
+              </div>}
+            </li>;
+          })}
+        </ul>
+      </section>}
       {notice && <details className="run-notice">
         <summary>OCR details</summary>
         <p>{notice}</p>
@@ -517,40 +617,34 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
         {tabs.map(({ id }) => <div className="run-pane" key={id} id={`${baseId}-${id}`}
           role="tabpanel" aria-labelledby={`${baseId}-${id}-tab`} tabIndex={0} hidden={activePanel !== id}>
           {activePanel === id && (id === "trace" ? <>
-            {report.trace.length ? <ol className="run-trace" role="list">{report.trace.map((step, index) => <li key={index}>
-              <span aria-hidden="true" className="run-trace-index">{index + 1}</span>
-              <div>
-                <p>{step.step}</p>
-                <Sources items={step.sources} pdf={pdf} />
-                {index === report.trace.length - 1 && (missing.length > 0 || conflicts.length > 0) &&
-                  <button className="button secondary run-fact-action" type="button" onClick={() => openReview()}>{reviewAction}</button>}
-              </div>
-            </li>)}</ol> : <p className="run-empty">A rate-card lookup needs verified policy facts. Check the Policy facts tab for fields that could not be read.</p>}
+            {decisions.length ? <Trace steps={decisions} pdf={pdf} /> :
+              <p className="run-empty">A rate-card lookup needs verified policy facts. Check the Policy facts tab for fields that could not be read.</p>}
+            {policyTrace.length > 0 && <details className="run-unverified">
+              <summary>Verified policy inputs</summary>
+              <Trace steps={policyTrace} pdf={pdf} />
+            </details>}
             {report.rule_version && <p className="run-source-note">Rate-card version {report.rule_version}</p>}
           </> : <>
             {confirmed.length > 0
               ? <Facts entries={confirmed} pdf={pdf} filename={run.filename} />
               : <p className="run-empty">No policy facts could be verified for this run.</p>}
-            {unresolved.length > 0 && <details className="run-unverified">
-              <summary>Unverified or missing fields <span aria-hidden="true">({unresolved.length})</span></summary>
-              <Facts entries={unresolved} pdf={pdf} filename={run.filename} onReview={openReview} reviewable={reviewable} />
+            {extraEvidence.length > 0 && <details className="run-unverified">
+              <summary>Other unverified readings <span aria-hidden="true">({extraEvidence.length})</span></summary>
+              <p>Argus excluded these readings from the rate lookup. Any fields you need to review are listed above.</p>
+              <Facts entries={extraEvidence} pdf={pdf} filename={run.filename} />
             </details>}
+            {report.status === "ambiguous" && optional.length > 0 && <button type="button" className="button secondary run-fact-action"
+              onClick={() => setReviewQueue([...optional, ...required])}>Add another policy detail</button>}
           </>)}
         </div>)}
       </div>
-    </> : <div className="run-job" data-analyzing={analyzing}>
-      {analyzing ? <>
-        <Image className="run-processing-mark" src={`${monogram.src}?processing`} alt="" width={80} height={80} unoptimized loading="eager" />
-        <div>
-          <h2>Reading the policy</h2>
-          <p>Argus is comparing page readings and checking the applicable rate card. You can open another run while it works.</p>
-        </div>
-      </> : <div>
+    </> : analyzing ? <AnalysisProgress progress={run.ocr_progress} /> : <div className="run-job">
+      <div>
         <p>{run.error || "The original PDF is saved. You can resume analysis from this run."}</p>
         {run.status !== "complete" && <button type="button" className="button primary" onClick={onProcess} disabled={working}>
           {status === "failed" ? "Retry analysis" : "Resume analysis"}
         </button>}
-      </div>}
+      </div>
     </div>}
   </section>;
 }

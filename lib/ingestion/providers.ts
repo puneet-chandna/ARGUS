@@ -17,7 +17,7 @@ const SUPER_VL_RETURNED_MODEL = "private/nvidia/nemotron-3.5-super-120b-a12b";
 const SUPER_VL_OPTIONS = {
   temperature: 0, max_tokens: 6500, chat_template_kwargs: { enable_thinking: false },
 };
-const MISTRAL_OPTIONS = { temperature: 0, max_tokens: 6500, reasoning_effort: "low" };
+const MISTRAL_OPTIONS = { temperature: 0, max_tokens: 6500 };
 const GEMINI_OPTIONS = { temperature: 0, maxOutputTokens: 12000, thinkingConfig: { thinkingLevel: "low" } };
 
 export const READER_LANES = [
@@ -126,24 +126,37 @@ function validBox(value: unknown): Box | null {
 
 function structured(reader: Reader, model: string, page: number, payload: unknown, legacy: boolean): PageRead {
   const {transcript, fields} = object(payload);
-  if (typeof transcript !== "string" || transcript.length > 50_000 || !Array.isArray(fields) || fields.length > 200) {
+  const quoteOnly = reader === "sarvam" && !legacy && transcript === null;
+  if ((!quoteOnly && typeof transcript !== "string") ||
+      (typeof transcript === "string" && transcript.length > 50_000) || !Array.isArray(fields) || fields.length > 200) {
     throw new ReaderError("invalid_provider_response");
   }
   const candidates: Candidate[] = [];
+  let malformed = false;
   for (const row of fields) {
-    const {field, value, quote, box} = object(row);
-    if (!FIELDS.some(name => name === field)) {
-      if (legacy) continue;
-      throw new ReaderError("invalid_provider_response");
+    if (row === null) continue;
+    if (typeof row !== "object" || Array.isArray(row)) {
+      malformed = true;
+      continue;
     }
-    if (typeof value !== "string" || typeof quote !== "string" || value.length > 250 || quote.length > 1000) {
-      throw new ReaderError("invalid_provider_response");
+    const {field, value, quote, box} = row;
+    if (!FIELDS.some(name => name === field)) {
+      malformed ||= !legacy;
+      continue;
+    }
+    if ((value == null || value === "") && (quote == null || quote === "")) continue;
+    if (typeof value !== "string" || typeof quote !== "string" || !value.trim() || !quote.trim()
+        || value.length > 250 || quote.length > 1000) {
+      malformed = true;
+      continue;
     }
     candidates.push({field: field as Field, value, quote, box: validBox(box)});
   }
+  if ((malformed || quoteOnly) && !candidates.length) throw new ReaderError("invalid_provider_response");
   return {
-    reader, model, page, transcript, candidates,
-    protocol: legacy ? "literal-page-v1 (benchmark cache)" : EXTRACTION_VERSION,
+    reader, model, page, transcript: typeof transcript === "string" ? transcript : "", candidates,
+    ...(quoteOnly ? {quoteOnly: true} : {}),
+    protocol: legacy ? "literal-page-v1 (benchmark cache)" : quoteOnly ? `${EXTRACTION_VERSION} (quotes only)` : EXTRACTION_VERSION,
   };
 }
 
@@ -157,7 +170,7 @@ function chatRead(reader: "nvidia-super-vl" | "nvidia-mistral", response: unknow
   if (choice.finish_reason !== "stop") throw new ReaderError("incomplete_generation");
   const { content } = object(choice.message);
   if (typeof content !== "string") throw new ReaderError("invalid_provider_response");
-  return structured(reader, model, page, parseJson(content.trim().replace(/^```json\s*([\s\S]+?)\s*```$/i, "$1")), legacy);
+  return structured(reader, model, page, parseJson(content.trim().replace(/^```(?:json)?\s*([\s\S]+?)\s*```$/i, "$1")), legacy);
 }
 
 function endpoint() {
@@ -272,15 +285,17 @@ export async function readLive(reader: Reader, page: number, image: Buffer, dead
     const superVl = reader === "nvidia-super-vl";
     const result = await request(superVl ? endpoint() : NVIDIA, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
         model: MODELS[reader], ...(superVl ? SUPER_VL_OPTIONS : MISTRAL_OPTIONS),
+        stream: false,
+        ...(superVl ? { response_format: { type: "json_schema", json_schema: { name: "page_reading", schema: SCHEMA } } } : {}),
         messages: [{ role: "user", content: [
           { type: "text", text: `${PROMPT}\nReturn only JSON matching: ${JSON.stringify(SCHEMA)}` },
           { type: "image_url", image_url: { url: `data:image/png;base64,${image.toString("base64")}` } },
         ] }],
       }),
-    }, deadline, superVl ? 30_000 : 65_000);
+    }, deadline, 65_000);
     const read = chatRead(reader, result, page, false);
     await saveCached(reader, image, result).catch(() => {});
     return read;
@@ -314,12 +329,8 @@ export async function readLive(reader: Reader, page: number, image: Buffer, dead
     fields: FIELDS.flatMap(field => {
       const entries = result[field];
       if (entries == null) return [];
-      return (Array.isArray(entries) ? entries : [entries]).flatMap(entry => {
-        if (entry == null) return [];
-        const row = object(entry);
-        if ((row.value == null || row.value === "") && (row.quote == null || row.quote === "")) return [];
-        return [{ ...row, field }];
-      });
+      return (Array.isArray(entries) ? entries : [entries]).map(entry =>
+        entry !== null && typeof entry === "object" && !Array.isArray(entry) ? {...entry, field} : entry);
     }),
   };
   const read = structured(reader, MODELS[reader], page, payload, false);

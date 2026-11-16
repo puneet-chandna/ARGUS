@@ -1,6 +1,6 @@
 import { canonical, CLARIFIABLE, FIELDS } from "./ingestion/facts.ts";
 import type { Field } from "./ingestion/facts.ts";
-import { policyCoverage } from "./rating/types.ts";
+import { policyCoverage, vehicleBodyStyle } from "./rating/types.ts";
 
 const MANUAL_FIELDS: readonly Field[] = [
   "policy_type", "insurer", "vehicle_class", "previous_insurer", "business_type",
@@ -24,6 +24,9 @@ export function confirmationError(field: string, value: string) {
   if (!normalized) return "Enter a valid value from the selected policy page.";
   if (field === "policy_type" && !policyCoverage(normalized)) {
     return "Enter the full policy title, such as Liability Only Policy or Package Policy.";
+  }
+  if (field === "vehicle_class" && (policyCoverage(normalized) || vehicleBodyStyle(normalized))) {
+    return "Enter the vehicle class shown in the schedule, such as private car.";
   }
 }
 

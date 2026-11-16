@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { decide, type FieldDecision, type Confirmation, type PageRead, type Reader } from "./facts.ts";
+import { decide, grounded, type FieldDecision, type Confirmation, type PageRead, type Reader } from "./facts.ts";
 import { cached, EXTRACTION_VERSION, liveKey, readLive, ReaderError, READER_LANES } from "./providers.ts";
 
 export { canonical, CLARIFIABLE, decide } from "./facts.ts";
@@ -99,22 +99,36 @@ export function extract(
   filename: string,
   allowCloud: boolean,
   reserveGemini?: (page: number) => Promise<boolean>,
+  progress?: (completed: number, total: number) => Promise<void>,
 ): Promise<Extraction> {
   return withPdf(pdf, async (file, count) => {
     const deadline = AbortSignal.timeout(12 * 60_000);
     const reads: PageRead[] = [];
     const failures: Extraction["reader_failures"] = {};
+    const failedAttempts: Record<string, Record<string, number>> = {};
     const halted = new Map<Reader, string>();
     let nextPage = 1;
+    let completed = 0;
+    let reporting = Promise.resolve();
+    await progress?.(0, count);
 
-    async function read(lane: typeof READER_LANES[number], number: number, image: Buffer) {
+    async function read(
+      lane: typeof READER_LANES[number], number: number, image: Buffer, peer?: Promise<PageRead | undefined>,
+    ): Promise<PageRead | undefined> {
+      async function usable(reading: PageRead) {
+        if (!reading.quoteOnly) return true;
+        const other = await peer;
+        return other && !other.quoteOnly && reading.candidates.some(candidate => grounded(candidate, other.transcript));
+      }
+
       let failure = "cloud_not_authorized";
       for (const reader of lane) {
         try {
           const hit = await cached(reader, number, image);
           if (hit) {
-            reads.push(hit);
-            return;
+            if (await usable(hit)) return hit;
+            failure = "ocr_quote_unconfirmed";
+            continue;
           }
         } catch (error) {
           failure = errorCode(error);
@@ -142,22 +156,39 @@ export function extract(
             if (!reserved) throw new ReaderError("quota_budget_exhausted");
             if (deadline.aborted) throw new ReaderError("ocr_deadline");
           }
-          reads.push(await readLive(reader, number, image, deadline));
-          return;
+          const reading = await readLive(reader, number, image, deadline);
+          if (!await usable(reading)) throw new ReaderError("ocr_quote_unconfirmed");
+          return reading;
         } catch (error) {
           failure = errorCode(error);
+          if (reader === "sarvam" && failure === "ocr_deadline" && !deadline.aborted) failure = "sarvam_job_timeout";
+          const counts = failedAttempts[reader] ??= {};
+          counts[failure] = (counts[failure] ?? 0) + 1;
           if (HALT.has(failure)) halted.set(reader, failure);
         }
       }
       (failures[number] ??= {})[lane[0]] = failure;
     }
 
-    // Read each page independently in two lanes. Only the first usable reader counts in each lane.
-    while (nextPage <= count && !deadline.aborted) {
-      const number = nextPage++;
-      const image = await renderPage(file, number);
-      await Promise.all(READER_LANES.map(lane => read(lane, number, image)));
+    async function readPages() {
+      // Limit raster memory and concurrent provider requests on small hosts.
+      while (nextPage <= count && !deadline.aborted) {
+        const number = nextPage++;
+        const image = await renderPage(file, number);
+        const independent = read(READER_LANES[1], number, image);
+        const pageReads = await Promise.all([read(READER_LANES[0], number, image, independent), independent]);
+        for (const reading of pageReads) if (reading) reads.push(reading);
+        if (!deadline.aborted && progress) {
+          const checked = ++completed;
+          reporting = reporting.then(() => progress(checked, count));
+          await reporting;
+        }
+      }
     }
+    const workers = await Promise.allSettled(Array.from({ length: Math.min(count, 3) }, readPages));
+    const failedWorker = workers.find(worker => worker.status === "rejected");
+    if (failedWorker) throw failedWorker.reason;
+    if (Object.keys(failedAttempts).length) console.warn("Argus OCR provider failures", failedAttempts);
     for (let page = nextPage; page <= count; page++) {
       failures[page] = {"sarvam": "ocr_deadline", "nvidia-super-vl": "ocr_deadline"};
     }

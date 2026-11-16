@@ -21,6 +21,9 @@
 
 # Generated files
 /node_modules/
+/test-results/
+/playwright-report/
+/var/cache/fontconfig/
 /.next/
 /next-env.d.ts
 *.tsbuildinfo

@@ -4,12 +4,12 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import test from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import { decide } from "../lib/ingestion/facts.ts";
-import { checksum, parseUpload, pdfObject } from "../lib/upload.ts";
-import { EXTRACTION_VERSION } from "../lib/ingestion/providers.ts";
-import { verifiedOcrProfile } from "../lib/verified-ocr.ts";
+import { decide } from "../../lib/ingestion/facts.ts";
+import { checksum, pdfObject } from "../../lib/upload.ts";
+import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
+import { verifiedOcrProfile } from "../../lib/verified-ocr.ts";
 
-const pdfFile = new URL("../vaatun-starter-bundle/sample-policies/pvt-car-satp-go-digit.pdf", import.meta.url);
+const pdfFile = new URL("../../vaatun-starter-bundle/sample-policies/pvt-car-satp-go-digit.pdf", import.meta.url);
 
 function form(bytes: BlobPart, filename = "upload.pdf", allowCloud = false) {
   const data = new FormData();
@@ -18,19 +18,10 @@ function form(bytes: BlobPart, filename = "upload.pdf", allowCloud = false) {
   return data;
 }
 
-test("PDF upload parsing preserves bytes and rejects invalid headers", async () => {
-  const pdf = await readFile(pdfFile);
-  const request = (data: FormData) => new Request("http://localhost/api/runs", { method: "POST", body: data });
-  assert.deepEqual(await parseUpload(request(form(pdf))), {
-    bytes: pdf, filename: "upload.pdf", digest: checksum(pdf), allowCloud: false,
-  });
-  await assert.rejects(parseUpload(request(form("not a PDF"))), /Invalid PDF header/);
-});
-
 const base = process.env.ARGUS_TEST_URL;
-test("real auth isolates history and PDF, retries bind to content, and original bytes survive processing", {
-  skip: !base || !process.env.ARGUS_TEST_SUPABASE_URL || !process.env.ARGUS_TEST_SUPABASE_SECRET,
-}, async () => {
+test("real auth isolates history and PDF, retries bind to content, and original bytes survive processing", async () => {
+  assert.ok(base && process.env.ARGUS_TEST_SUPABASE_URL && process.env.ARGUS_TEST_SUPABASE_SECRET,
+    "Configure an Argus app and disposable Supabase instance with ARGUS_TEST_* variables.");
   const url = new URL(base!);
   const supabaseUrl = new URL(process.env.ARGUS_TEST_SUPABASE_URL!);
   for (const address of [url, supabaseUrl]) assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(address.hostname), "Use a disposable local stack.");

@@ -234,7 +234,7 @@
   },
   "tp": {
     "status": "unsupported",
-    "reason": "The supplied grid has no usable mapping from this make/model to its Type or from the RTO to its cluster.",
+    "reason": "The workbook does not confirm which payout cluster covers the policy’s RTO.",
     "rate": null,
     "applicable": true
   },
@@ -494,28 +494,83 @@
       ]
     },
     {
-      "step": "The supplied grid has no usable mapping from this make/model to its Type or from the RTO to its cluster.",
+      "step": "The workbook uses the policy’s RTO to identify the payout cluster. It gives no crosswalk for this registration.",
       "sources": [
         {
           "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
           "sheet": "General Guidelines",
-          "cells": "C7:C10"
+          "cells": "C10"
         },
         {
           "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
           "sheet": "Pvtcar",
-          "cells": "A3:E5"
+          "cells": "M5:BO5"
+        }
+      ]
+    },
+    {
+      "step": "If the policy’s RTO belongs to the DELHI payout cluster, the standard-grid base rate is 38% across every vehicle Type for CNG stand-alone TP renewal.",
+      "sources": [
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "V5"
         },
         {
           "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
           "sheet": "Pvtcar",
-          "cells": "G5:BR5"
+          "cells": "V511, V515, V519, V523, V527, V531, V535"
+        }
+      ],
+      "policy_fields": [
+        "rto_location",
+        "rto",
+        "fuel",
+        "vehicle_class",
+        "policy_type",
+        "insurer",
+        "previous_insurer",
+        "business_type"
+      ]
+    },
+    {
+      "step": "The standard grid shows base commission on net premium. Policy-specific and other overrides take priority.",
+      "sources": [
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "General Guidelines",
+          "cells": "C7"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "General Guidelines",
+          "cells": "C11:C17"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "F2:F3"
+        }
+      ]
+    },
+    {
+      "step": "The workbook does not confirm which payout cluster covers the policy’s RTO.",
+      "sources": [
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "General Guidelines",
+          "cells": "C10"
+        },
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "M5:BO5"
         }
       ]
     }
   ],
   "status": "unsupported",
-  "rule_version": "ts1-1a07381c1d6a033c",
+  "rule_version": "ts1-5a79a3ea91c8efa6",
   "business_type": "renewal",
   "confidence": {
     "level": "high",

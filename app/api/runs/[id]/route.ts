@@ -35,7 +35,8 @@ export const POST = endpoint(async (_request, route: Context) => {
       const reusable = cached ?? (reviewed?.extraction_version === EXTRACTION_VERSION &&
         (!claim.allow_cloud || !Object.keys(reviewed.reader_failures).length) ? reviewed : null);
       const extraction = reusable ? rebindExtraction(reusable, claim.filename)
-        : await extract(bytes, claim.filename, claim.allow_cloud, () => store.reserveGemini(claim));
+        : await extract(bytes, claim.filename, claim.allow_cloud, () => store.reserveGemini(claim),
+          (checked, total) => store.reportProgress(claim, checked, total).catch(() => {}));
       report = applyRating(reviewed && reusable !== reviewed ? reuseConfirmations(extraction, reviewed) : extraction);
     } catch (error) {
       const message = error instanceof PdfError

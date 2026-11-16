@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,3 +35,25 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - uses: supabase/setup-cli@v3
+        with:
+          version: 2.90.0
+      - name: Run storage and browser tests with local Supabase
+        run: |
+          supabase_dir="$RUNNER_TEMP/argus-supabase"
+          mkdir -p "$supabase_dir"
+          supabase --workdir "$supabase_dir" init
+          cp -r supabase/migrations "$supabase_dir/supabase/"
+          supabase --workdir "$supabase_dir" start
+          supabase --workdir "$supabase_dir" status --output env > "$RUNNER_TEMP/supabase.env"
+          source "$RUNNER_TEMP/supabase.env"
+          export SUPABASE_URL="$API_URL" SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY"
+          export ARGUS_PUBLIC_ORIGIN=http://127.0.0.1:3361
+          export ARGUS_TEST_URL="$ARGUS_PUBLIC_ORIGIN" ARGUS_TEST_SUPABASE_URL="$SUPABASE_URL" ARGUS_TEST_SUPABASE_SECRET="$SUPABASE_SECRET_KEY"
+          npm run start -- --hostname 127.0.0.1 --port 3361 > "$RUNNER_TEMP/argus.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 10 --retry-connrefused "$ARGUS_TEST_URL/api/health"
+          npm run test:integration
+          npm run test:e2e

@@ -28,9 +28,11 @@ export function readerNotice(failures: Record<string, Record<string, string>> = 
   const prefix = pages.length === 1 ? "One page is missing an independent reading." : `${pages.length} pages are missing an independent reading.`;
   const configuredReasons = Object.entries(reasons).filter(([reason]) => codes.has(reason)).map(([, label]) => label);
   if (codes.has("cloud_not_authorized")) configuredReasons.push("This upload used cache only. No compatible readings were found for those pages.");
-  if (codes.has("provider_timeout")) configuredReasons.push("A reader timed out.");
+  if (codes.has("provider_timeout") || codes.has("sarvam_job_timeout")) configuredReasons.push("A reader timed out.");
+  if (codes.has("ocr_deadline")) configuredReasons.push("Analysis reached its time limit before all pages could be checked.");
   if (codes.has("provider_unreachable")) configuredReasons.push("A reader could not be reached.");
   if (codes.has("invalid_provider_response")) configuredReasons.push("A reader returned a response Argus could not verify.");
+  if (codes.has("ocr_quote_unconfirmed")) configuredReasons.push("The readers could not corroborate a returned quote.");
   if (!configuredReasons.length) configuredReasons.push("A reader did not return usable evidence. Review the policy facts below.");
   return [prefix, ...configuredReasons].join(" ");
 }

@@ -15,6 +15,7 @@ export type Reader = "sarvam" | "nvidia-super-vl" | "gemini-flash" | "nvidia-mis
 export type Candidate = { field: Field; value: string; quote: string; box: Box | null };
 export type PageRead = {
   reader: Reader; model: string; page: number; transcript: string; candidates: Candidate[]; protocol?: string;
+  quoteOnly?: true;
 };
 export type Evidence = {
   file: string; page: number; reader: Reader; model: string; raw: string; quote: string; box: Box | null;
@@ -134,6 +135,12 @@ function legalInsurer(value: string) {
   return /\binsurance(?: (?:company|co))? (?:limited|ltd)\b/.test(comparable(value));
 }
 
+function documentHeading(candidate: Candidate) {
+  const { field, value } = candidate;
+  return field === "insurer" && legalInsurer(value)
+    || field === "policy_type" && /\bpolicy\b/.test(comparable(value)) && Boolean(policyCoverage(value));
+}
+
 export function grounded(candidate: Candidate, transcript: string) {
   return groundedOnPage(candidate, normalizedLines(transcript));
 }
@@ -144,9 +151,7 @@ function groundedOnPage(candidate: Candidate, lines: string[]) {
   const found = lines.filter(line => line.includes(` ${context} `));
   if (!context || !found.length) return false;
   if (comparable(value) === context) {
-    const fullTitle = field === "policy_type" && /\bpolicy\b/.test(context) && Boolean(policyCoverage(value));
-    return (field === "insurer" && legalInsurer(value) || fullTitle) &&
-      found.some(line => !/\b(previous|prior|old|expiring)\b/.test(line));
+    return documentHeading(candidate) && found.some(line => !/\b(previous|prior|old|expiring)\b/.test(line));
   }
   const previous = /\b(previous|prior)\b/.test(context);
   if (field.startsWith("previous_") && !previous) return false;
@@ -183,16 +188,16 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
   const prepared = reads.map(read => ({
     ...read, lines: normalizedLines(read.transcript),
   }));
-  const insurerAnchors = prepared.flatMap(read => read.candidates
-    .filter(candidate => candidate.field === "insurer" && legalInsurer(candidate.value) && groundedOnPage(candidate, read.lines))
-    .map(candidate => ({ page: read.page, reader: read.reader, value: comparable(candidate.value) })));
+  const headingAnchors = prepared.flatMap(read => read.candidates
+    .filter(candidate => documentHeading(candidate) && groundedOnPage(candidate, read.lines))
+    .map(candidate => ({ field: candidate.field, page: read.page, reader: read.reader, value: comparable(candidate.value) })));
   for (const field of FIELDS) {
     const evidence = new Map<string, Evidence>();
     const rejected = new Map<string, Evidence>();
     const observed = new Map<string, Map<number, Set<Reader>>>();
-    const carrierHeadings = new Set<Reader>();
+    const headingReaders = new Set<Reader>();
     let invalidDate = false;
-    for (const {page, reader, model, lines, candidates, protocol} of prepared) {
+    for (const {page, reader, model, lines, candidates, protocol, quoteOnly} of prepared) {
       for (const candidate of candidates) {
         if (candidate.field !== field) continue;
         const source = {
@@ -200,12 +205,14 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
           ...(protocol ? { protocol } : {}),
         };
         const key = JSON.stringify(source);
-        const name = field === "insurer" ? comparable(candidate.value) : "";
-        // A structured legal name can share the same-page citation from an independently transcribed match.
-        const anchoredName = name && name === comparable(candidate.quote) &&
-          insurerAnchors.some(anchor => anchor.page === page && anchor.reader !== reader && anchor.value === name) &&
-          !lines.some(line => line.includes(` ${name} `) && /\b(previous|prior|old|expiring)\b/.test(line));
-        if (!groundedOnPage(candidate, lines) && !anchoredName) {
+        const heading = documentHeading(candidate) ? comparable(candidate.value) : "";
+        // An exact heading can share the same-page citation from an independently transcribed match.
+        const anchoredHeading = heading && heading === comparable(candidate.quote) &&
+          headingAnchors.some(anchor => anchor.field === field && anchor.page === page && anchor.reader !== reader && anchor.value === heading) &&
+          !lines.some(line => line.includes(` ${heading} `) && /\b(previous|prior|old|expiring)\b/.test(line));
+        const anchoredQuote = quoteOnly && prepared.some(other =>
+          other.page === page && other.reader !== reader && !other.quoteOnly && groundedOnPage(candidate, other.lines));
+        if (!groundedOnPage(candidate, lines) && !anchoredHeading && !anchoredQuote) {
           rejected.set(key, source);
           continue;
         }
@@ -216,7 +223,7 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
           continue;
         }
         evidence.set(key, source);
-        if (field === "insurer" && legalInsurer(candidate.value)) carrierHeadings.add(reader);
+        if (heading) headingReaders.add(reader);
         let pages = observed.get(value);
         if (!pages) observed.set(value, pages = new Map());
         let independent = pages.get(page);
@@ -226,17 +233,17 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
     }
     const citations = [...(evidence.size ? evidence : rejected).values()]
       .sort((a, b) => a.page - b.page || a.reader.localeCompare(b.reader) || a.raw.localeCompare(b.raw));
-    // A legal insurer name identifies the document even when readers cite different pages.
-    const documentInsurer = field === "insurer" && observed.size === 1 && carrierHeadings.size >= 2;
-    const match = documentInsurer ? [...observed.keys()][0] : [...observed].find(([, pages]) => [...pages.values()].some(readers => readers.size >= 2))?.[0];
+    // Matching document headings can be cited on different pages.
+    const corroboratedHeading = observed.size === 1 && headingReaders.size >= 2;
+    const match = corroboratedHeading ? [...observed.keys()][0] : [...observed].find(([, pages]) => [...pages.values()].some(readers => readers.size >= 2))?.[0];
     let reason = "insufficient_agreement";
     let status: FieldDecision["status"] = "needs_review";
     let value = null;
     if (invalidDate) reason = "ambiguous_date";
     else if (observed.size > 1) reason = "conflicting_readings";
     else if (match !== undefined) {
-      reason = complete || documentInsurer ? "independent_agreement" : "incomplete_independent_page_coverage";
-      if (complete || documentInsurer) {
+      reason = complete || corroboratedHeading ? "independent_agreement" : "incomplete_independent_page_coverage";
+      if (complete || corroboratedHeading) {
         status = "accepted";
         value = match;
       }

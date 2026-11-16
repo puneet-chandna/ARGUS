@@ -21,6 +21,7 @@ type Run = {
   created_at: string;
   revision: number;
   lease_until: string | null;
+  ocr_progress?: { completed: number; total: number } | null;
   result: Report | null;
   error: string | null;
 };
@@ -30,8 +31,8 @@ const BUCKET = "argus-policy-pdfs";
 const summary = "id,filename,display_name,pinned,deleting_at,checksum,status,error,revision,created_at,lease_until,decision:result->>status";
 
 export function present(run: Run, includeResult = true) {
-  const { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, result, lease_until } = run;
-  return { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, lease_until, decision: result?.status ?? null, ...(includeResult ? { result } : {}) };
+  const { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, result, lease_until, ocr_progress } = run;
+  return { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, lease_until, ocr_progress, decision: result?.status ?? null, ...(includeResult ? { result } : {}) };
 }
 
 export function runStore(client: SupabaseClient, owner: string) {
@@ -133,6 +134,11 @@ export function runStore(client: SupabaseClient, owner: string) {
       }).abortSignal(AbortSignal.timeout(5000));
       if (error) throw error;
       return data === true;
+    },
+    async reportProgress(claim: Run, completed: number, total: number) {
+      await client.from(TABLE).update({ ocr_progress: { completed, total } })
+        .match({ ...owned(claim.id), status: "processing", revision: claim.revision })
+        .gt("lease_until", new Date().toISOString()).abortSignal(AbortSignal.timeout(2000));
     },
     async finish(claim: Run, result: Report | null, errorMessage: string | null) {
       const { data, error } = await client.from(TABLE).update({

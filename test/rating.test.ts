@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { rate, type RatingResult } from "../lib/rating/index.ts";
+import { applyRating } from "../lib/report.ts";
 
 const digit = {
   insurer: "Go Digit General Insurance Ltd.",
@@ -108,14 +109,21 @@ test("Reliance requires dated applicability and checks the CC threshold and add-
 });
 
 test("Tata AIG identifies the source mapping gap with candidate row references", () => {
-  const result = rate({
+  const facts = {
     insurer: "Tata AIG", previous_insurer: "Tata AIG General Insurance", policy_type: "Private Car SATP",
-    rto: "DL9C", fuel: "CNG", make: "Maruti", model: "Zen Estilo",
-  });
+    rto: "DL9C", rto_location: "Delhi", fuel: "CNG", make: "Maruti", model: "Zen Estilo",
+  };
+  const result = rate(facts);
   assert.equal(result.status, "unsupported");
   assert.equal(result.od.applicable, false);
   assert.equal(result.tp.rate, null);
-  assertSource(result, "General Guidelines", "C7:C10");
+  assertSource(result, "General Guidelines", "C10");
+  assertSource(result, "Pvtcar", "V5");
+  assertSource(result, "Pvtcar", "V511, V515, V519, V523, V527, V531, V535");
+  assert.ok(result.trace.some(step => /If .*DELHI.*38%/.test(step.step)));
+  for (const changes of [{ rto_location: "" }, { rto_location: "Bihar" }, { fuel: "" }]) {
+    assert.ok(!rate({ ...facts, ...changes }).trace.some(step => /If the policy’s RTO belongs/.test(step.step)));
+  }
   assertSource(result, "Pvtcar", "G511:L511");
 });
 
@@ -140,5 +148,16 @@ test("All four fixture traces replay known source-reviewed facts against the ori
       if (key !== "trace") assert.deepEqual(fixture[key], value, `${name}: ${key}`);
     }
     assert.deepEqual(fixture.trace.slice(-result.trace.length), result.trace, name);
+    if (name === "pvt-car-satp-tata-aig") {
+      const report = applyRating({
+        ...fixture, clarifications: [],
+        fields: Object.fromEntries(Object.entries(fixture.fields).map(([key, field]) => [
+          key, { ...(field as object), status: Object.hasOwn(facts, key) ? "accepted" : "needs_review" },
+        ])),
+      });
+      const conditional = report.trace.slice(report.rating_trace_start).find(step => step.step.includes("38%"));
+      assert.ok(conditional);
+      assert.deepEqual([...new Set(conditional.sources.flatMap(source => source.page ? [source.page] : []))].sort(), [1, 11, 4].sort());
+    }
   }
 });

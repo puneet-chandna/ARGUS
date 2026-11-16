@@ -26,7 +26,7 @@ These decision traces replay source-reviewed facts through the same rating engin
 | [Go Digit · Stand-alone TP](submission/pvt-car-satp-go-digit.json) | Inapplicable | **29.5%** | RTO cluster and fuel/engine band select the SATP row. |
 | [HDFC ERGO · Comprehensive](submission/pvt-car-comprehensive-hdfc-ergo.json) | Ambiguous | Unsupported | Zone 2 is established. OD needs verified fuel and eligible GWP. |
 | [Reliance · Comprehensive](submission/pvt-car-comprehensive-reliance.json) | Ambiguous | Unsupported | The mapped zone, vehicle segment, and under-1,000 cc footnote are traced. Policy inception predates the grid. |
-| [Tata AIG · Stand-alone TP](submission/pvt-car-satp-tata-aig.json) | Inapplicable | Unsupported | The grid lacks usable model-to-Type and RTO-to-cluster mappings. |
+| [Tata AIG · Stand-alone TP](submission/pvt-car-satp-tata-aig.json) | Inapplicable | Unsupported | The seven DELHI rows agree on a 38% base rate. The workbook does not establish that the policy’s RTO belongs to that cluster. |
 
 ## How it works
 
@@ -85,7 +85,15 @@ npm test
 npm run build
 ```
 
-For the storage integration test, point `ARGUS_TEST_URL`, `ARGUS_TEST_SUPABASE_URL` and `ARGUS_TEST_SUPABASE_SECRET` to a running app and disposable local Supabase project with the migrations applied. Run `node --test test/storage.test.ts` to check account isolation, upload retries, PDF integrity, and reuse of confirmed fields.
+`npm test` runs deterministic rating, OCR, and review tests without network calls. For API and browser tests, point `ARGUS_TEST_URL`, `ARGUS_TEST_SUPABASE_URL` and `ARGUS_TEST_SUPABASE_SECRET` to a running local app and disposable Supabase project with all migrations applied.
+
+```sh
+npm run test:integration
+npx playwright install chromium
+npm run test:e2e
+```
+
+The integration suite covers account isolation, retries, PDF integrity, and confirmed-field reuse. Playwright covers uploads, conflict review, citations, and reopening a private PDF after signing out and back in. Both use synthetic PDFs and run without live OCR.
 
 ## Deploy to Render
 

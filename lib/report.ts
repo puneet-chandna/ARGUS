@@ -1,13 +1,19 @@
 import { canonical, type Extraction, type Confirmation, type Evidence } from "./ingestion/index.ts";
 import { rate, type RatingResult } from "./rating/index.ts";
+import { vehicleBodyStyle } from "./rating/types.ts";
 import { HttpError } from "./http.ts";
 import { confirmationError, conflictFields, reviewFields } from "./review-fields.ts";
 
-export type Report = Extraction & RatingResult;
+export type Report = Extraction & RatingResult & { rating_trace_start?: number };
 
 export function applyRating(extraction: Extraction): Report {
+  const fields = { ...extraction.fields };
+  const classification = fields.vehicle_class;
+  if (classification?.value != null && vehicleBodyStyle(classification.value)) {
+    fields.vehicle_class = { ...classification, value: null, status: "rejected", reason: "vehicle_body_style_only" };
+  }
   const facts: Record<string, string> = {};
-  for (const [name, field] of Object.entries(extraction.fields)) {
+  for (const [name, field] of Object.entries(fields)) {
     if ((field.status === "accepted" || field.status === "confirmed_by_reviewer") && field.value !== null) {
       facts[name] = field.value;
     }
@@ -18,25 +24,29 @@ export function applyRating(extraction: Extraction): Report {
   }
 
   const rated = rate(facts);
-  const trace: { step: string; sources: (Evidence | Confirmation)[] }[] = Object.entries(facts).map(([name, value]) => {
-    const field = extraction.fields[name];
+  const policySources = (name: string): (Evidence | Confirmation)[] => {
+    const field = fields[name];
+    return field?.confirmation ? [field.confirmation] : field?.evidence ?? [];
+  };
+  const trace = Object.entries(facts).map(([name, value]) => {
+    const field = fields[name];
     const confirmation = field.confirmation;
     return {
       step: `${name.replaceAll("_", " ")}: ${value}${confirmation ? " (confirmed by reviewer)" : ""}`,
-      sources: confirmation ? [confirmation] : field.evidence,
+      sources: policySources(name),
     };
   });
   if (rated.business_type) {
-    const sources = ["insurer", "previous_insurer", "business_type"].flatMap<Evidence | Confirmation>((name) => {
-      const field = extraction.fields[name];
-      return field?.confirmation ? [field.confirmation] : field?.evidence ?? [];
-    });
+    const sources = ["insurer", "previous_insurer", "business_type"].flatMap<Evidence | Confirmation>(policySources);
     trace.push({ step: `Business type: ${rated.business_type}`, sources });
   }
   const confidence = extraction.clarifications.length
     ? { ...rated.confidence, reason: `${rated.confidence.reason} Reviewer-confirmed evidence was used.` }
     : rated.confidence;
-  return { ...extraction, ...rated, review_fields: rated.review_fields, confidence, trace: [...trace, ...rated.trace] };
+  const decisions = rated.trace.map(step => ({
+    ...step, sources: [...step.sources, ...(step.policy_fields ?? []).flatMap<Evidence | Confirmation>(policySources)],
+  }));
+  return { ...extraction, ...rated, fields, review_fields: rated.review_fields, confidence, rating_trace_start: trace.length, trace: [...trace, ...decisions] };
 }
 
 export function clarifyBatch(report: Report, inputs: unknown, pages: number): Report {

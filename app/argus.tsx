@@ -270,7 +270,7 @@ function Workspace({ onUnauthorized, sessionError }: { onUnauthorized: () => voi
         if (controller.signal.aborted) return;
         record(run);
         if (run.status === "queued" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now())) {
-          timer = setTimeout(refresh, 2500);
+          timer = setTimeout(refresh, 5000);
         }
       } catch (error) { if (!controller.signal.aborted) fail(error); }
     }

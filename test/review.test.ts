@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { canonical, decide, type PageRead } from "../lib/ingestion/index.ts";
 import { applyRating, clarifyBatch, type Report } from "../lib/report.ts";
-import { conflictFields, reviewFields } from "../lib/review-fields.ts";
+import { confirmationError, conflictFields, reviewFields } from "../lib/review-fields.ts";
 
 function clarify(report: Report, input: {field: string; value: string; page: number}, pages: number) {
   return clarifyBatch(report, [input], pages);
@@ -38,7 +38,7 @@ test("a source-cited review resolves an OCR conflict and retains both readings",
 
 test("missing OCR can be reviewed from the Tata schedule without inventing a rate", () => {
   const filename = "tata.pdf";
-  let result = applyRating({
+  const result = applyRating({
     filename, checksum: "b".repeat(64), extraction_version: "test", reader_failures: { 1: { sarvam: "ocr_disabled" } },
     fields: decide(filename, [], false), clarifications: [],
   });
@@ -54,19 +54,41 @@ test("missing OCR can be reviewed from the Tata schedule without inventing a rat
     /Enter the full policy title/);
   assert.throws(() => clarify(result, { field: "policy_type", value: "Third-Party Cover", page: 1 }, 12),
     /Enter the full policy title/);
-  for (const [field, value, page] of [
-    ["policy_type", "Auto Secure - Liability Only Policy", 1],
-    ["insurer", "Tata AIG General Insurance Company Limited", 1],
-    ["vehicle_class", "Private Car", 4], ["rto", "DL9C", 4],
-    ["make", "Maruti", 4], ["model", "Zen Estilo", 4], ["fuel", "CNG", 4],
-    ["previous_insurer", "Tata AIG General Insurance Co. Ltd.", 11],
-  ] as const) result = clarify(result, { field, value, page }, 12);
-  assert.equal(result.status, "unsupported");
-  assert.equal(result.review_fields, undefined);
-  assert.equal(result.od.applicable, false);
-  assert.equal(result.tp.rate, null);
-  assert.match(result.tp.reason, /no usable mapping/);
-  assert.deepEqual(result.fields.rto.confirmation?.page, 4);
+  assert.match(confirmationError("vehicle_class", "Liability Only Policy") ?? "", /Enter the vehicle class/);
+  assert.equal(confirmationError("vehicle_class", "Private car"), undefined);
+  const reviewed = clarifyBatch(result, [
+    { field: "policy_type", value: "Auto Secure - Liability Only Policy", page: 1 },
+    { field: "insurer", value: "Tata AIG General Insurance Company Limited", page: 1 },
+  ], 12);
+  assert.equal(reviewed.status, "unsupported");
+  assert.equal(reviewed.review_fields, undefined);
+  assert.equal(reviewed.od.applicable, false);
+  assert.equal(reviewed.tp.rate, null);
+  assert.match(reviewed.tp.reason, /which payout cluster covers the policy’s RTO/);
+  assert.equal(reviewed.fields.rto.value, null);
+
+});
+
+test("a body style alone can be reviewed before showing the conditional Tata rate", () => {
+  const filename = "tata.pdf";
+  const facts = {
+    insurer: "Tata AIG", previous_insurer: "Tata AIG", policy_type: "Liability Only Policy",
+    vehicle_class: "Hatch Back", fuel: "CNG", rto_location: "Delhi",
+  };
+  const report = applyRating({
+    filename, checksum: "d".repeat(64), extraction_version: "test", reader_failures: {}, clarifications: [],
+    fields: { ...decide(filename, []), ...Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+      [field, { value, status: "accepted", reason: "independent_agreement", evidence: [] }])) },
+  });
+  assert.equal(report.status, "ambiguous");
+  assert.deepEqual(report.review_fields, ["vehicle_class"]);
+  assert.equal(report.fields.vehicle_class.reason, "vehicle_body_style_only");
+  assert.match(confirmationError("vehicle_class", "HATCH BACK") ?? "", /vehicle class/);
+  const reviewed = clarify(report, { field: "vehicle_class", value: "Private car", page: 4 }, 12);
+  assert.equal(reviewed.status, "unsupported");
+  assert.equal(reviewed.tp.rate, null);
+  const conditional = reviewed.trace.find(step => step.step.includes("38%"));
+  assert.ok(conditional?.sources.some(source => source.file === filename && source.page === 4));
 });
 
 test("a batch confirms every conflict together and leaves missing fields alone", () => {
@@ -114,4 +136,16 @@ test("independent legal insurer headings agree across pages even with partial OC
   assert.equal(decide(filename, [structuredOnly, {
     ...second, transcript: `Previous insurer: ${name}`,
   }], false).insurer.value, null);
+});
+
+test("independent readers can corroborate a printed policy heading despite missing pages", () => {
+  const title = "Auto Secure - Liability Only Policy";
+  const first: PageRead = {
+    reader: "sarvam", page: 1, model: "test", transcript: title,
+    candidates: [{ field: "policy_type", value: title, quote: title, box: null }],
+  };
+  const second: PageRead = { ...first, reader: "gemini-flash", page: 4 };
+  assert.equal(decide("policy.pdf", [first, second], false).policy_type.value, title.toLowerCase());
+  assert.equal(decide("policy.pdf", [first, { ...second, reader: first.reader }], false).policy_type.value, null);
+  assert.equal(decide("policy.pdf", [first, { ...second, transcript: `Previous: ${title}` }], false).policy_type.value, null);
 });

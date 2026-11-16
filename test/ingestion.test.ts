@@ -7,7 +7,8 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { canonical, decide, extract, type PageRead } from "../lib/ingestion/index.ts";
 import { grounded, type Candidate } from "../lib/ingestion/facts.ts";
-import { cacheKey } from "../lib/ingestion/providers.ts";
+import { cacheKey, readLive } from "../lib/ingestion/providers.ts";
+import { syntheticPdf } from "./fixtures/pdf.ts";
 
 const read = (reader: PageRead["reader"], page: number, value: string, quote = `Engine capacity: ${value} cc`): PageRead => ({
   reader, model: reader, page, transcript: quote,
@@ -22,6 +23,15 @@ test("fields require two independently grounded reads of the same page", () => {
   assert.equal(decide("source.pdf", [sarvam, {...nvidia, page: 2}]).engine_cc.value, null);
   assert.equal(decide("source.pdf", [sarvam, {...nvidia, transcript: "Seats: 998"}]).engine_cc.value, null);
   assert.equal(decide("source.pdf", [sarvam, nvidia], false).engine_cc.reason, "incomplete_independent_page_coverage");
+});
+
+test("a quote-only reading needs an independent same-page transcript", () => {
+  const sarvam = { ...read("sarvam", 11, "998"), transcript: "", quoteOnly: true as const };
+  const peer = read("nvidia-super-vl", 11, "998");
+  assert.equal(decide("source.pdf", [sarvam, peer]).engine_cc.value, "998");
+  assert.equal(decide("source.pdf", [sarvam, {...peer, page: 12}]).engine_cc.value, null);
+  assert.equal(decide("source.pdf", [sarvam, {...peer, candidates: []}]).engine_cc.value, null);
+  assert.equal(decide("source.pdf", [sarvam, {...peer, transcript: ""}]).engine_cc.value, null);
 });
 
 test("later page disagreement preserves both citations and prevents acceptance", () => {
@@ -58,29 +68,6 @@ test("wrong term, premium component and partial RTO cannot ground a candidate", 
   assert.equal(valid("rto", "MH01", "RTO: MH-01"), true);
 });
 
-function syntheticPdf(text: string) {
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  const page = `BT /F1 12 Tf 30 200 Td (${text}) Tj ET`;
-  objects.push(`<< /Length ${page.length} >>\nstream\n${page}\nendstream`);
-  let pdf = "%PDF-1.4\n";
-  const pointers = ["0000000000 65535 f "];
-  objects.forEach((object, i) => {
-    pointers.push(pad(pdf.length) + " 00000 n ");
-    pdf += `${i+1} 0 obj\n${object}\nendobj\n`;
-  });
-  const table = `xref\n0 ${pointers.length}\n${pointers.join("\n")}\n`;
-  return Buffer.from(pdf + table + `trailer\n<< /Size ${pointers.length} /Root 1 0 R >>\nstartxref\n${pdf.length}\n%%EOF\n`);
-}
-
-function pad(offset: number) {
-  return String(offset).padStart(10, "0");
-}
-
 test("a synthetic PDF uses its rendered image cache or fails closed with zero network calls", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "argus-ocr-test-"));
   t.after(() => rm(directory, {recursive: true, force: true}));
@@ -109,7 +96,11 @@ test("a synthetic PDF uses its rendered image cache or fails closed with zero ne
     writeFile(join(directory, `${cacheKey("sarvam", image)}.json`), JSON.stringify(sarvam)),
     writeFile(join(directory, `${cacheKey("nvidia-super-vl", image)}.json`), JSON.stringify(superVl)),
   ]);
-  const replay = await extract(pdf, "unseen.pdf", false);
+  const progress: [number, number][] = [];
+  const replay = await extract(pdf, "unseen.pdf", false, undefined, async (completed, total) => {
+    progress.push([completed, total]);
+  });
+  assert.deepEqual(progress, [[0, 1], [1, 1]]);
   assert.equal(replay.fields.engine_cc.value, "998");
   assert.equal(replay.fields.engine_cc.evidence.length, 2);
   assert.deepEqual(replay.reader_failures, {});
@@ -136,6 +127,11 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
   const submissions: string[] = [];
   let sarvamStatus = 200;
   let geminiStatus = 200;
+  let sarvamQuoteOnly = false;
+  let sarvamQuoteMismatch = false;
+  let waitForPeers = false;
+  let arrivals = 0;
+  const peers = Promise.withResolvers<void>();
   const transport = t.mock.method(globalThis, "fetch", async (url: string, options: RequestInit) => {
     assert.equal(options.redirect, "error");
     if (url.endsWith("/extract")) {
@@ -145,7 +141,11 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
       return Response.json({job_id: "synthetic-job", status: "completed"}, {status: sarvamStatus});
     }
     if (url.endsWith("/results")) {
-      return Response.json({result: {transcript, engine_cc: [null, {value: null, quote: null}, {value: "998", quote: transcript}]}});
+      const reading = sarvamQuoteMismatch
+        ? { value: "777", quote: "Engine capacity: 777 cc" }
+        : { value: "998", quote: transcript };
+      return Response.json({result: {transcript: sarvamQuoteOnly ? null : transcript, fuel: "unreadable",
+        engine_cc: [null, {value: null, quote: null}, reading]}});
     }
     assert.equal(typeof options.body, "string");
     const payload = JSON.parse(options.body as string);
@@ -162,8 +162,13 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
     if (payload.model === "nvidia/nemotron-3.5-super-vl-120b-a12b") {
       assert.equal(payload.chat_template_kwargs.enable_thinking, false);
       submissions.push("nvidia-super-vl");
+      if (waitForPeers) {
+        if (++arrivals === 3) peers.resolve();
+        await peers.promise;
+      }
     } else {
       assert.equal(payload.model, "mistralai/mistral-large-4-1t-a52b");
+      assert.equal(payload.reasoning_effort, undefined);
       submissions.push("nvidia-mistral");
     }
     return Response.json({model: payload.model, choices: [{finish_reason: "stop", message: {content: JSON.stringify(response)}}]});
@@ -173,6 +178,10 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
   for (const scenario of [
     { name: "Sarvam works", sarvamStatus: 200, geminiStatus: 200, geminiAvailable: false,
       secondary: "sarvam", requests: ["sarvam"] },
+    { name: "Sarvam returned a quote without a transcript", sarvamStatus: 200, quoteOnly: true, geminiStatus: 200, geminiAvailable: false,
+      secondary: "sarvam", requests: ["sarvam"] },
+    { name: "Sarvam returned an uncorroborated quote", sarvamStatus: 200, quoteOnly: true, quoteMismatch: true, geminiStatus: 200, geminiAvailable: true,
+      secondary: "gemini-flash", requests: ["sarvam", "gemini-flash"] },
     { name: "Sarvam credits exhausted", sarvamStatus: 402, geminiStatus: 200, geminiAvailable: true,
       secondary: "gemini-flash", requests: ["sarvam", "gemini-flash"] },
     { name: "Gemini daily cap reached", sarvamStatus: 402, geminiStatus: 200, geminiAvailable: false,
@@ -183,6 +192,8 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
     submissions.length = 0;
     sarvamStatus = scenario.sarvamStatus;
     geminiStatus = scenario.geminiStatus;
+    sarvamQuoteOnly = scenario.quoteOnly ?? false;
+    sarvamQuoteMismatch = scenario.quoteMismatch ?? false;
     const reservations: number[] = [];
     const result = await extract(pdf, "unseen.pdf", true, async page => {
       reservations.push(page);
@@ -208,4 +219,44 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
   sarvamStatus = 200;
   const recovered = await extract(pdf, "unseen.pdf", true);
   assert.deepEqual(recovered.fields.engine_cc.evidence.map(item => item.reader).sort(), ["nvidia-super-vl", "sarvam"]);
+
+  process.env.ARGUS_WRITE_OCR_CACHE = "0";
+  const checked: number[] = [];
+  waitForPeers = true;
+  const timer = setTimeout(() => peers.reject(new Error("Expected three concurrent page reads")), 5000);
+  const multi = await extract(syntheticPdf("First", "Second", "Third", "Fourth"), "multi.pdf", true, undefined,
+    async completed => { checked.push(completed); }).finally(() => clearTimeout(timer));
+  assert.deepEqual(checked, [0, 1, 2, 3, 4]);
+  assert.deepEqual(multi.reader_failures, {});
+  assert.equal(arrivals, 4);
+});
+
+test("Super VL preserves grounded fields when a response includes missing or malformed candidates", async t => {
+  const oldKey = process.env.NVIDIA_API_KEY;
+  const oldCache = process.env.ARGUS_WRITE_OCR_CACHE;
+  process.env.NVIDIA_API_KEY = "test";
+  process.env.ARGUS_WRITE_OCR_CACHE = "0";
+  t.after(() => {
+    if (oldKey === undefined) delete process.env.NVIDIA_API_KEY;
+    else process.env.NVIDIA_API_KEY = oldKey;
+    if (oldCache === undefined) delete process.env.ARGUS_WRITE_OCR_CACHE;
+    else process.env.ARGUS_WRITE_OCR_CACHE = oldCache;
+  });
+  const transcript = "Engine capacity: 998 cc";
+  const valid = { field: "engine_cc", value: "998", quote: transcript };
+  const bad = { field: "fuel", value: null, quote: null };
+  let fields: unknown[] = [bad, valid, { field: "engine_cc", value: 999, quote: "Engine capacity: 999 cc" }];
+  t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+    const payload = JSON.parse(String(init.body));
+    assert.equal(payload.stream, false);
+    assert.equal(payload.response_format.type, "json_schema");
+    return Response.json({
+      model: "private/nvidia/nemotron-3.5-super-120b-a12b",
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ transcript, fields }) } }],
+    });
+  });
+  const result = await readLive("nvidia-super-vl", 1, Buffer.from("image"), AbortSignal.timeout(5000));
+  assert.deepEqual(result.candidates, [{...valid, box: null}]);
+  fields = [{ field: "engine_cc", value: 999, quote: "Engine capacity: 999 cc" }];
+  await assert.rejects(readLive("nvidia-super-vl", 1, Buffer.from("image"), AbortSignal.timeout(5000)), /invalid_provider_response/);
 });

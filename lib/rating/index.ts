@@ -3,7 +3,7 @@ import { digit } from "./digit.ts";
 import { hdfc } from "./hdfc.ts";
 import { reliance } from "./reliance.ts";
 import { tata } from "./tata.ts";
-import { component, policyCoverage, tidy } from "./types.ts";
+import { component, policyCoverage, tidy, vehicleBodyStyle } from "./types.ts";
 import type { Facts, Parts, RatingResult } from "./types.ts";
 export type { Facts, RatingResult, Source, TraceStep } from "./types.ts";
 
@@ -25,7 +25,7 @@ export function rate(facts: Facts): RatingResult {
   const insurer = insurerName(facts.insurer);
   const previous = insurerName(facts.previous_insurer);
   const kind = policyCoverage(facts.policy_type);
-  const vehicle = tidy(facts.vehicle_class);
+  const vehicle = vehicleBodyStyle(facts.vehicle_class) ? "" : tidy(facts.vehicle_class);
   const privateCar = ["private car", "private passenger car", "private motor car", "pvt car"].includes(vehicle)
     || !vehicle && /\b(?:private|pvt) car\b/.test(tidy(facts.policy_type));
   const printedBusiness = tidy(facts.business_type);
