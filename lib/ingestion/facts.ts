@@ -89,6 +89,7 @@ export function canonical(field: string, text: string): string | null {
     raw = raw.replace(/[\s-]/g, "").toUpperCase();
     return /^[A-Z]{2}\d{1,2}[A-Z]?$/.test(raw) ? raw : null;
   }
+  if (field === "rto_location") raw = raw.replace(/\s*,\s*/g, ", ");
   if (["engine_cc", "manufacture_year", "registration_year", "vehicle_age"].includes(field)) {
     if (field === "engine_cc") {
       raw = raw.replace(/\s*cc$/i, "");

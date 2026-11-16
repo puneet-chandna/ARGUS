@@ -122,7 +122,7 @@ export function AuthEntry({
         </header>
         {confirmationEmail ? <button className="button primary entry-action" type="button" onClick={switchMode}>Back to sign-in <Arrow /></button> :
           <>
-            <form className="entry-auth-form" onSubmit={onSubmit} aria-busy={busy}>
+            <form className="entry-auth-form" method="post" onSubmit={onSubmit} aria-busy={busy}>
               <label htmlFor="reviewer-email">Email address</label>
               <input id="reviewer-email" name="email" type="email" autoComplete="username" value={email}
                 onChange={event => onEmail(event.target.value)} maxLength={254} required />

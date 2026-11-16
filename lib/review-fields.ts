@@ -11,6 +11,7 @@ const MANUAL_FIELDS: readonly Field[] = [
 const CHECKS = new Set([...CLARIFIABLE, "invalid_coverage_period", "premium_totals_disagree"]);
 
 type ReviewFact = { status: string; reason: string; value: string | number | null; evidence: { page?: number }[] };
+type ReviewableReport = { status: string; fields: Record<string, ReviewFact>; review_fields?: readonly string[] };
 
 export function conflictFields(report: { fields: Record<string, ReviewFact> }) {
   return FIELDS.filter(field => {
@@ -30,7 +31,7 @@ export function confirmationError(field: string, value: string) {
   }
 }
 
-export function reviewFields(report: { status: string; fields: Record<string, ReviewFact> }) {
+export function reviewFields(report: ReviewableReport) {
   const disputed = FIELDS.filter(field => {
     const fact = report.fields[field];
     return fact?.status === "needs_review" && CHECKS.has(fact.reason) && fact.evidence.some(source => source.page);
@@ -41,4 +42,9 @@ export function reviewFields(report: { status: string; fields: Record<string, Re
     if (field === "policy_type" && !policyCoverage(String(fact?.value ?? ""))) return true;
     return !fact || (fact.value == null && fact.status !== "confirmed_by_reviewer");
   })])];
+}
+
+export function requiredReviewFields(report: ReviewableReport) {
+  const allowed = new Set<string>(reviewFields(report));
+  return [...new Set([...conflictFields(report), ...(report.review_fields ?? [])])].filter(field => allowed.has(field));
 }

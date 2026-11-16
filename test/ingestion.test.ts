@@ -46,6 +46,18 @@ test("later page disagreement preserves both citations and prevents acceptance",
   ]);
 });
 
+test("RTO location punctuation spacing does not trigger a false OCR conflict", () => {
+  const reads = (["sarvam", "nvidia-super-vl"] as const).map((reader, i) => {
+    const value = i === 0 ? "Kanpur Nagar, UTTAR PRADESH" : "Kanpur Nagar,UTTAR PRADESH";
+    const quote = `RTO Location ${value}`;
+    return { reader, model: reader, page: 1, transcript: quote,
+      candidates: [{ field: "rto_location" as const, value, quote, box: null }] };
+  });
+  const result = decide("source.pdf", reads).rto_location;
+  assert.equal(result.value, "kanpur nagar, uttar pradesh");
+  assert.equal(result.evidence.length, 2);
+});
+
 test("normalizes unambiguous dates and exact amounts conservatively", () => {
   assert.equal(canonical("start_date", "03/04/2026"), null);
   assert.equal(canonical("start_date", "2026-02-31"), null);

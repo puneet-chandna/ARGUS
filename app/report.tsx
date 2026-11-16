@@ -4,7 +4,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import processingMonogram from "./argus-processing.svg";
 import stillMonogram from "./icon.svg";
 import { readerNotice } from "./ocr";
-import { confirmationError, conflictFields, reviewFields } from "../lib/review-fields";
+import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "../lib/review-fields";
 import "./workspace.css";
 
 export type Source = {
@@ -60,7 +60,7 @@ export type Run = {
 };
 
 type Clarification = { field: string; value: string; page: number };
-export type ReviewSubmission = { confirmations: Clarification[]; revision: number };
+export type ReviewSubmission = { confirmations: Clarification[]; revision: number; guided?: true };
 
 export const labels = {
   queued: "Queued",
@@ -155,7 +155,7 @@ function readingGroups(evidence: Source[]) {
   return [...groups.values()];
 }
 
-function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, working, onConfirm }: {
+function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, working, advanced, onConfirm }: {
   field: string;
   fact?: Fact;
   page: number;
@@ -164,19 +164,19 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
   draft?: Clarification;
   conflicting: boolean;
   working: boolean;
+  advanced: boolean;
   onConfirm: (value: Clarification) => void;
 }) {
   const groups = readingGroups(fact?.evidence ?? []);
   const candidates = groups.flat().filter(source => source.raw && !confirmationError(field, source.raw));
   const suggestion = candidates[0] && candidates.every(source => source.raw?.toLowerCase() === candidates[0].raw?.toLowerCase())
     ? candidates[0] : undefined;
-  const [reading, setReading] = useState<Source>();
   const [custom, setCustom] = useState(!conflicting || Boolean(draft));
   const [value, setValue] = useState(draft?.value ?? "");
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
-  const answer = custom ? value.trim() : reading?.raw;
-  const citedPage = custom ? page : reading?.page;
+  const answer = value.trim();
+  const citedPage = page;
 
   function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -186,33 +186,36 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
     if (!error) onConfirm({ field, value: answer, page: citedPage });
   }
 
-  return <article className="run-review" aria-labelledby="review-editor-title">
+  return <article className="run-review" data-advanced={advanced} aria-labelledby="review-editor-title">
     <h3 id="review-editor-title">{fieldName(field)}</h3>
     {draft && <p className="review-confirmed">Confirmed for this review · {draft.value} · Page {draft.page}</p>}
-    <p>{conflicting ? "Compare the highlighted values with the original policy, then choose a reading or enter your own."
+    <p>{conflicting ? `The readings disagree on ${fieldName(field).toLowerCase()}. Compare each value with its page in the original policy.`
       : field === "policy_type" ? "Copy the full policy title from the policy schedule."
       : field === "insurer" ? "Use the current insurer named in the policy schedule."
+      : field === "rto" ? "Enter the RTO code from the vehicle registration, such as MH01."
+      : field === "fuel" ? "Use the fuel type printed in the vehicle details."
+      : field === "engine_cc" ? "Use the cubic capacity printed in the vehicle details, in cc."
       : "Enter the value shown in the original policy."}</p>
     <form onSubmit={confirm} className="review-confirmation">
       {conflicting && <div className="review-readings">
         {groups.map((sources, index) => <section key={index} data-reader={index + 1}>
-          <h4>OCR {index + 1}</h4>
+          <h4>Reading {index + 1}</h4>
           <ul>{sources.map(source => <li key={source.raw}>
             <mark>{source.raw}</mark>
             {source.quote && source.quote !== source.raw && <blockquote>{source.quote}</blockquote>}
             <div className="reading-actions">
               <button className="button secondary" type="button" onClick={() => openPage(source.page!, source)}
                 disabled={!pages || source.page! > pages || working}>View page {source.page}</button>
-              <button className="button secondary" type="button" aria-pressed={!custom && reading === source}
-                onClick={() => { setReading(source); setCustom(false); setError(""); openPage(source.page!, source); }}
-                disabled={!pages || source.page! > pages || working}>
-                {!custom && reading === source ? "Selected" : `Use OCR ${index + 1}`}
+              <button className="button secondary" type="button"
+                onClick={() => { setValue(source.raw ?? ""); setCustom(true); setError(""); openPage(source.page!, source); }}
+                disabled={!pages || source.page! > pages || working || Boolean(confirmationError(field, source.raw!))}>
+                Use reading {index + 1}
               </button>
             </div>
             {!source.box && <small>Page cited · exact region unavailable</small>}
           </li>)}</ul>
         </section>)}
-        {groups.length === 1 && <section><h4>OCR 2</h4><p>No independent value to compare.</p></section>}
+        {groups.length === 1 && <section><h4>Reading 2</h4><p>No independent value to compare.</p></section>}
       </div>}
       {conflicting && <button type="button" className="button secondary" aria-pressed={custom} disabled={working}
         onClick={() => { setCustom(true); setError(""); requestAnimationFrame(() => input.current?.focus()); }}>
@@ -227,7 +230,6 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
           maxLength={220} required disabled={working} />
       </label>}
       {custom && field.endsWith("_date") && <p>Use YYYY-MM-DD.</p>}
-      {custom && field === "rto" && <p>Enter just the RTO code, such as DL9C.</p>}
       {citedPage && <p>Source · page {citedPage}</p>}
       {error && <p className="error" role="alert">{error}</p>}
       <button type="submit" className="button primary" disabled={working || !answer || !citedPage || citedPage > pages}>
@@ -237,8 +239,9 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
   </article>;
 }
 
-function ReviewDesk({ fields, conflicts, drafts, report, run, pdf, working, onDraft, onConfirm, onClose }: {
+function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, working, onDraft, onConfirm, onClose }: {
   fields: string[];
+  required: readonly string[];
   conflicts: readonly string[];
   drafts: Record<string, Clarification>;
   onDraft: (answer: Clarification) => void;
@@ -257,13 +260,19 @@ function ReviewDesk({ fields, conflicts, drafts, report, run, pdf, working, onDr
   const [retry, setRetry] = useState(0);
   const [pageError, setPageError] = useState(false);
   const [badImage, setBadImage] = useState<number>();
+  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [lastConfirmed, setLastConfirmed] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
   const viewer = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const recalculate = useRef<HTMLButtonElement>(null);
   const picker = useRef<HTMLSelectElement>(null);
-  const field = fields.includes(selection) ? selection : fields[0];
-  const pending = conflicts.filter(name => !drafts[name]);
+  const queue = [...new Set([...fields, ...Object.keys(drafts), ...discovered])];
+  const field = queue.includes(selection) ? selection : queue[0];
+  const pending = [...new Set([...required, ...discovered])].filter(name => !drafts[name]);
+  const busy = working || checking;
   const answers = Object.values(drafts);
   const annotations = conflicts.includes(field) ? readingGroups(report.fields[field]?.evidence ?? []) : [];
   const currentPage = pages ? Math.min(page, pages) : page;
@@ -306,33 +315,64 @@ function ReviewDesk({ fields, conflicts, drafts, report, run, pdf, working, onDr
     openPage(drafts[next]?.page ?? report.fields[next]?.evidence.find(source => source.page)?.page ?? 1);
   }
 
-  function confirm(answer: Clarification) {
-    onDraft(answer);
-    const next = pending.find(name => name !== answer.field);
-    if (next) {
-      selectField(next);
-      picker.current?.focus();
-    } else {
+  async function checkRemaining(confirmations = answers) {
+    setError("");
+    setChecking(true);
+    try {
+      const response = await fetch(`/api/runs/${run.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmations, revision: run.revision, preview: true }),
+      });
+      const result = await response.json();
+      if (!response.ok || !Array.isArray(result.remaining)) {
+        throw new Error(result.error || "Could not check the remaining details.");
+      }
+      const next = result.remaining as string[];
+      setDiscovered(next);
+      if (next.length) {
+        selectField(next[0]);
+        requestAnimationFrame(() => picker.current?.focus());
+        return;
+      }
+      setReady(true);
       requestAnimationFrame(() => recalculate.current?.focus());
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not check the remaining details.");
+    } finally {
+      setChecking(false);
     }
   }
 
+  function confirm(answer: Clarification) {
+    onDraft(answer);
+    setReady(false);
+    setLastConfirmed(fieldName(answer.field));
+    const outstanding = drafts[answer.field] ? required.filter(name => !drafts[name]) : pending;
+    const next = outstanding.find(name => name !== answer.field);
+    if (next) {
+      selectField(next);
+      picker.current?.focus();
+      return;
+    }
+    void checkRemaining(Object.values({ ...drafts, [answer.field]: answer }));
+  }
+
   async function submit() {
-    if (pending.length || !answers.length || working) return;
+    if (!ready || pending.length || !answers.length || busy) return;
     setError("");
     try {
-      await onConfirm({ confirmations: answers, revision: run.revision });
+      await onConfirm({ confirmations: answers, revision: run.revision, guided: true });
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not save the review. Try again.");
     }
   }
 
   return <dialog ref={dialog} className="review-desk" aria-labelledby="review-title" onClose={onClose}
-    onCancel={event => { if (working) event.preventDefault(); }}>
+    onCancel={event => { if (busy) event.preventDefault(); }}>
     <header className="review-header">
       <div><h2 id="review-title">{conflicts.length ? "Resolve OCR conflicts" : "Verify policy details"}</h2>
         <p>{run.display_name || run.filename}</p></div>
-      <button className="button secondary" type="button" disabled={working} onClick={() => dialog.current?.close()}>
+      <button className="button secondary" type="button" disabled={busy} onClick={() => dialog.current?.close()}>
         Back to report
       </button>
     </header>
@@ -341,7 +381,7 @@ function ReviewDesk({ fields, conflicts, drafts, report, run, pdf, working, onDr
         <div className="review-pdf-bar">
           <h3 id="review-pdf-title">Original policy</h3>
           {pages > 0 && <label>Page
-            <select value={currentPage} onChange={event => openPage(Number(event.target.value))} disabled={working}>
+            <select value={currentPage} onChange={event => openPage(Number(event.target.value))} disabled={busy}>
               {Array.from({length: pages}, (_, index) => <option key={index} value={index + 1}>{index + 1} of {pages}</option>)}
             </select>
           </label>}
@@ -362,28 +402,34 @@ function ReviewDesk({ fields, conflicts, drafts, report, run, pdf, working, onDr
               return <span key={`${group}-${index}`} className="review-region" data-reader={group + 1}
                 data-active={target === source} aria-hidden="true"
                 style={{ left: `${left * 100}%`, top: `${top * 100}%`, width: `${(right - left) * 100}%`, height: `${(bottom - top) * 100}%` }}>
-                <span>OCR {group + 1}</span>
+                <span>Reading {group + 1}</span>
               </span>;
             }))}
           </div>}
       </section>
       <div className="review-editor">
         <label className="review-field-picker">Field to review
-          <select ref={picker} value={field} disabled={working} onChange={event => selectField(event.target.value)}>
-            {fields.map(name => <option key={name} value={name}>{fieldName(name)}{drafts[name] ? " · Confirmed" : ""}</option>)}
+          <select ref={picker} value={field} disabled={busy} onChange={event => selectField(event.target.value)}>
+            {queue.map(name => <option key={name} value={name}>{fieldName(name)}{drafts[name] ? " · Confirmed" : ""}</option>)}
           </select>
         </label>
         <ConfirmField key={field} field={field} fact={report.fields[field]} page={currentPage} openPage={openPage} pages={pages}
-          draft={drafts[field]} conflicting={conflicts.includes(field)} working={working} onConfirm={confirm} />
+          draft={drafts[field]} conflicting={conflicts.includes(field)} working={busy} advanced={Boolean(lastConfirmed)} onConfirm={confirm} />
       </div>
     </div>
     <footer className="review-footer">
       <div>
-        <p role="status">{conflicts.length ? `${pending.length} of ${conflicts.length} OCR conflicts remaining`
-          : `${answers.length} policy ${answers.length === 1 ? "detail" : "details"} confirmed`}</p>
+        <p role="status">
+          {lastConfirmed && <strong key={lastConfirmed} className="review-step-done">{lastConfirmed} confirmed. </strong>}
+          {working ? "Recalculating commission…" : checking ? "Checking what’s still needed…" : ready ? "Ready to recalculate."
+            : pending.length === 1 ? "One detail remaining." : pending.length ? `${pending.length} details remaining.` : ""}
+        </p>
         {error && <p className="error" role="alert">{error}</p>}
       </div>
-      <button ref={recalculate} type="button" className="button primary" disabled={working || !answers.length || pending.length > 0} onClick={submit}>
+      {!ready && !pending.length && answers.length > 0 && !checking && <button type="button" className="button secondary"
+        onClick={() => void checkRemaining()}>Check remaining details</button>}
+      <button ref={recalculate} type="button" className="button primary" disabled={busy || !ready || !answers.length || pending.length > 0} onClick={submit}>
+        {working && <span className="review-spinner" aria-hidden="true" />}
         {working ? "Recalculating…" : "Recalculate commission"}
       </button>
     </footer>
@@ -494,9 +540,7 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
 
   const reviewable = report && !run.deleting_at ? reviewFields(report) : [];
   const conflicts = report && !run.deleting_at ? conflictFields(report) : [];
-  const blockers = report?.review_fields ?? reviewable.filter(field => field === "policy_type" || field === "insurer");
-  const missing = blockers.filter(field => reviewable.some(name => name === field) && !conflicts.some(name => name === field));
-  const required = [...conflicts, ...missing];
+  const required = report && !run.deleting_at ? requiredReviewFields(report) : [];
   const extraEvidence = facts.filter(([field, fact]) => fact.value == null && fact.evidence.length > 0 && !required.includes(field));
   const optional = reviewable.filter(field => !required.includes(field));
   const traceStart = report?.rating_trace_start ?? 0;
@@ -594,7 +638,7 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
         <summary>OCR details</summary>
         <p>{notice}</p>
       </details>}
-      {reviewQueue.length > 0 && <ReviewDesk key={run.revision} fields={reviewQueue} conflicts={conflicts} drafts={drafts}
+      {reviewQueue.length > 0 && <ReviewDesk key={run.revision} fields={reviewQueue} required={required} conflicts={conflicts} drafts={drafts}
         report={report} run={run} pdf={pdf} working={working} onDraft={answer => setDrafts(current => ({ ...current, [answer.field]: answer }))}
         onClose={() => setReviewQueue([])} onConfirm={async value => {
           await onConfirm(value);

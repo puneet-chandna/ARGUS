@@ -115,7 +115,7 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   const name = "unseen-review-policy.pdf";
   await page.goto("/sign-in");
   await signIn(page, reviewer);
-  await uploadPdf(page, name, syntheticPdf("Engine capacity: 998 cc"));
+  await uploadPdf(page, name, syntheticPdf("Engine capacity: 998 cc", "Private Car Liability Only Policy", "Insurer: Example General Insurance"));
   await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("Undetermined");
 
   // Inject the two OCR responses at the persisted analysis boundary; the review and storage routes stay real.
@@ -137,9 +137,22 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   await expect(dialog.getByRole("img", { name: /page 1 of unseen-review-policy.pdf/i })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
   await expect(dialog.getByText("1086", { exact: true })).toBeVisible();
-  await dialog.getByRole("button", { name: "Enter a custom value" }).click();
-  await dialog.getByRole("textbox", { name: "Value from the policy" }).fill("998");
+  await expect(dialog.getByRole("heading", { name: "Reading 1" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Reading 2" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Use reading 2" }).click();
+  await expect(dialog.getByRole("textbox", { name: "Value from the policy" })).toHaveValue("998");
   await dialog.getByRole("button", { name: "Confirm value" }).click();
+  for (const [field, policyPage, value] of [
+    ["Policy type", "2 of 3", "Private Car Liability Only Policy"],
+    ["Insurer", "3 of 3", "Example General Insurance"],
+  ]) {
+    await expect(dialog.getByRole("heading", { name: field, exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
+    await dialog.getByRole("combobox", { name: "Page", exact: true }).selectOption({ label: policyPage });
+    await dialog.getByRole("textbox", { name: "Value from the policy" }).fill(value);
+    await dialog.getByRole("button", { name: "Confirm value" }).click();
+  }
+  await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeEnabled();
   await dialog.getByRole("button", { name: "Recalculate commission" }).click();
   await expect(page.getByText("Review saved. Commission recalculated.")).toBeVisible();
 
@@ -147,5 +160,5 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   await page.getByRole("tab", { name: /Policy facts/ }).click();
   const facts = page.getByRole("tabpanel", { name: /Policy facts/ });
   await expect(facts.getByText("998", { exact: true })).toBeVisible();
-  await expect(facts.getByText("Reviewer confirmed on")).toContainText("Policy page 1");
+  await expect(facts.getByText("Reviewer confirmed on Policy page 1", { exact: true })).toBeVisible();
 });

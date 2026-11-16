@@ -47,8 +47,8 @@ export function digit(policy: Facts): Parts {
   const trace: Parts["trace"] = [];
   const cite = (step: string, ...sources: Source[]) => trace.push({ step, sources });
   const od = component("inapplicable", "Stand-alone TP policy.");
-  const finish = (status: Status, reason: string, rate: string | null = null): Parts =>
-    ({ od, tp: component(status, reason, rate), trace });
+  const finish = (status: Status, reason: string, rate: string | null = null, review_fields?: readonly string[]): Parts =>
+    ({ od, tp: component(status, reason, rate), trace, ...(review_fields ? { review_fields } : {}) });
 
   if (policy.policy_type !== "satp") {
     const reason = "This Go Digit lookup covers private-car stand-alone TP. The 4W New Business 1+3 sheet requires a separate lookup.";
@@ -58,13 +58,13 @@ export function digit(policy: Facts): Parts {
   if (policy.vehicle_class !== "private_car") {
     const reason = "The 4W SATP lookup requires verified private-car classification.";
     cite(reason, source(TP, "B2:E2"), source(RTO, "B2:C2"));
-    return finish(policy.vehicle_class ? "unsupported" : "ambiguous", reason);
+    return policy.vehicle_class ? finish("unsupported", reason) : finish("ambiguous", reason, null, ["vehicle_class"]);
   }
   const rto = rtoCode(policy.rto);
   if (!validRto(rto)) {
     const reason = "A verified RTO code is needed to select the 4WTP cluster.";
     cite(reason, source(RTO, "B2:C2"));
-    return finish("ambiguous", reason);
+    return finish("ambiguous", reason, null, ["rto"]);
   }
   const mappings = rtos.filter(([, code]) => rtoCode(code) === rto);
   if (!mappings.length) {
@@ -92,12 +92,12 @@ export function digit(policy: Facts): Parts {
   if (!fuel) {
     const reason = "A verified fuel type is needed to select a SATP segment.";
     cite(reason, source(TP, "B2:F2"));
-    return finish("ambiguous", reason);
+    return finish("ambiguous", reason, null, ["fuel"]);
   }
   const cc = integer(policy.engine_cc) || null;
   const age = integer(policy.vehicle_age);
   const clusterRates = rates.filter(([, label]) => [clusterKey, clusters[clusterKey]].includes(label.toLowerCase()));
-  const matched: { row: RateRow; citation: Source; incomplete: boolean }[] = [];
+  const matched: { row: RateRow; citation: Source; missing: string[] }[] = [];
   const fuelSources: Source[] = [];
   for (const row of clusterRates) {
     const [i, , segment, ageBand, , note] = row;
@@ -108,13 +108,14 @@ export function digit(policy: Facts): Parts {
     const ccMatch = inBand(label[2], cc);
     const ageMatch = inBand(ageBand, age);
     if (ccMatch === false || ageMatch === false) continue;
-    matched.push({ row, citation, incomplete: ccMatch === null || ageMatch === null });
+    matched.push({ row, citation, missing: [...(ccMatch === null ? ["engine_cc"] : []), ...(ageMatch === null ? ["vehicle_age"] : [])] });
   }
-  if (matched.some(({ incomplete }) => incomplete)) {
-    const missing = [cc === null ? "engine CC" : "", age === null ? "vehicle age" : ""].filter(Boolean).join(" or ");
+  const review = [...new Set(matched.flatMap(({ missing }) => missing))];
+  if (review.length) {
+    const missing = review.map(field => field === "engine_cc" ? "engine capacity (cc)" : "vehicle age").join(" and ");
     const reason = `A verified ${missing} is needed to establish the applicable SATP band.`;
     cite(reason, source(TP, "B2:F2"), ...matched.map(({ citation }) => citation));
-    return finish("ambiguous", reason);
+    return finish("ambiguous", reason, null, review);
   }
   if (!matched.length) {
     const reason = fuelSources.length ? `The ${cluster} rows have no matching ${fuel} CC and age band.` :
@@ -129,7 +130,9 @@ export function digit(policy: Facts): Parts {
     if (note) {
       cite(`Checked the row’s restriction: ${note}.`, citation);
       const result = restriction(note, cc, age);
-      if (result) return finish(result, result === "unsupported" ? `${note}.` : `The available facts do not clear the source restriction: ${note}.`);
+      if (result) return finish(result, result === "unsupported" ? `${note}.` : `The available facts do not clear the source restriction: ${note}.`, null,
+        result === "ambiguous" ? [...(cc === null && /cc/i.test(note) ? ["engine_cc"] : []),
+          ...(age === null && /age/i.test(note) ? ["vehicle_age"] : [])] : undefined);
     }
     if (rate === null) {
       const reason = "The matching SATP row has no numeric Max CD2 rate.";

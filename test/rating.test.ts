@@ -39,6 +39,17 @@ test("Digit follows the original RTO-to-cluster and SATP segment rows", () => {
   assertSource(result, "4W SATP", "B293:E293");
 });
 
+test("Digit asks for the next missing input only when its workbook branch needs it", () => {
+  const missing = { ...digit, rto: "", fuel: "", engine_cc: "" };
+  assert.deepEqual(rate(missing).review_fields, ["rto"]);
+  assert.deepEqual(rate({ ...missing, rto: digit.rto }).review_fields, ["fuel"]);
+  assert.deepEqual(rate({ ...missing, rto: digit.rto, fuel: "petrol" }).review_fields, ["engine_cc"]);
+  const cng = rate({ ...missing, rto: digit.rto, fuel: "cng" });
+  assert.equal(cng.tp.rate, "0");
+  assert.equal(cng.review_fields, undefined);
+  assert.equal(rate(digit).tp.rate, "29.5");
+});
+
 test("Digit handles explicit zero, literal edges, missing facts and declines", () => {
   const cases = [
     [{ engine_cc: "1000" }, "unsupported", null],

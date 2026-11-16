@@ -276,6 +276,23 @@ dialog.review-desk[open] { display: flex; flex-direction: column; }
 .review-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 12px 20px; border-top: 1px solid var(--line); }
 .review-footer p { color: var(--muted); font-size: .875rem; }
 .review-footer .error { color: var(--danger); }
+.review-step-done { color: var(--success); }
+.review-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: .45em;
+  vertical-align: -.125em;
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .run-review[data-advanced="true"], .review-step-done, .review-confirmed { animation: review-step-in var(--feedback-duration) var(--settle) both; }
+  .review-spinner { animation: review-spin .7s linear infinite; }
+}
+@keyframes review-step-in { from { opacity: .65; transform: translateY(4px); } }
+@keyframes review-spin { to { transform: rotate(360deg); } }
 .run-fact-action { margin-top: 8px; }
 
 

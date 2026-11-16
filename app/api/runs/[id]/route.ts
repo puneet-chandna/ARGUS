@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { endpoint, HttpError, json, readJson } from "../../../../lib/http.ts";
 import { extract, PdfError, storedPdfPages } from "../../../../lib/ingestion/index.ts";
 import { applyRating, clarifyBatch, type Report } from "../../../../lib/report.ts";
+import { requiredReviewFields } from "../../../../lib/review-fields.ts";
 import { present, runStore } from "../../../../lib/runs.ts";
 import { reviewer, serviceClient } from "../../../../lib/supabase.ts";
 import { checksum } from "../../../../lib/upload.ts";
@@ -17,7 +18,12 @@ async function context({ params }: Context) {
 
 export const GET = endpoint(async (_request, route: Context) => {
   const { store, id } = await context(route);
-  return json({ run: present(await store.get(id)) });
+  const run = await store.get(id);
+  const result = run.result;
+  if (result?.status === "ambiguous" && !result.review_fields) {
+    return json({ run: present({ ...run, result: { ...result, review_fields: applyRating(result).review_fields } }) });
+  }
+  return json({ run: present(run) });
 });
 
 export const POST = endpoint(async (_request, route: Context) => {
@@ -69,7 +75,13 @@ export const PATCH = endpoint(async (request, route: Context) => {
   }
   const { pdf } = await store.pdf(id);
   const pages = await storedPdfPages(new Uint8Array(await pdf.arrayBuffer()));
-  return json({ run: present(await store.revise(run, clarifyBatch(run.result, input.confirmations, pages))) });
+  const reviewed = clarifyBatch(run.result, input.confirmations, pages);
+  const remaining = requiredReviewFields(reviewed);
+  if (input.preview === true) return json({ remaining });
+  if (input.guided === true && remaining.length) {
+    throw new HttpError(422, "Confirm the remaining policy details before recalculating.");
+  }
+  return json({ run: present(await store.revise(run, reviewed)) });
 });
 
 
