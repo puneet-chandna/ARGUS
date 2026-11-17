@@ -3,8 +3,11 @@ import { authClient, reviewer } from "../../../lib/supabase.ts";
 import { endpoint, HttpError, json, readJson } from "../../../lib/http.ts";
 
 export const GET = endpoint(async () => {
-  const { auth, user } = await reviewer();
-  return json(await sessionSettings(auth, user));
+  const signedIn = await reviewer().catch(error => {
+    if (error instanceof HttpError && error.status === 401) return null;
+    throw error;
+  });
+  return json(signedIn ? await sessionSettings(signedIn.auth, signedIn.user) : null);
 });
 
 export const POST = endpoint(async (request) => {

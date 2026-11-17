@@ -66,10 +66,20 @@ Open [Deploy to Render](https://render.com/deploy?repo=https://github.com/puneet
 
 Apply all Supabase migrations before deploying this version. The profile and preferences belong to the signed-in reviewer. Audit records are created by Auth, database transitions and successful exports; historical activity is not backfilled. An approval records consent, while an analysis records whether a cloud reader was contacted. The session list uses Supabase's device metadata. Session revocation stops refresh; an already issued access token may remain valid until it expires.
 
-The default is to keep runs and original PDFs until deleted. The optional **Delete original PDFs after analysis** preference applies to new successful analyses and keeps the structured result and rate evidence. It prevents reopening or manually reviewing the original. Argus attempts removal immediately and can retry pending removals during maintenance.
+The default is to keep runs and original PDFs until deleted. With **Delete original PDFs after analysis** enabled, Argus keeps the original through any required review. After cleanup, the structured result and rate evidence remain in history. Maintenance can retry pending removals.
 
 To enable timed retention, set `ARGUS_MAINTENANCE_SECRET` to a random secret of at least 32 characters and configure an external scheduler to send `POST /api/maintenance` with `Authorization: Bearer <secret>` at least daily. Store the secret in the scheduler's secret manager. Monitor non-2xx responses and retry them; each call handles up to 100 expired runs and 100 pending PDF removals. Do not configure the secret without an active scheduler. With no scheduler, timed retention controls are unavailable.
 
 Personal exports include account details, the profile photo if set, preferences, analyses and activity in a ZIP of JSON and CSV files. They do not include original PDFs. Account deletion removes the local Auth account and reconciles the private PDF objects before deleting identity data. Action email notifications, geographic session lookup and two-factor enrollment are unavailable in the standard Argus configuration.
 
 When using Supabase Cron, enable `pg_cron` and `pg_net` and provision the job with [the retention setup SQL](supabase/retention-schedule.sql). The database generates the bearer and keeps it in a private schema. Use the actual HTTPS origin of your Argus deployment. Disable the schedule and clear its configuration together to turn off timed retention.
+
+### Reading Eye development
+
+<img src="assets/argus-logo-4-pixel-iris-animated.svg" alt="Argus pixel iris artwork" width="80" />
+
+Apply `supabase/migrations/202611170003_reading_eye.sql` before running the updated app. The upload starts the server worker after the response; reopening a processing run reattaches to its persisted progress. A cancelled run keeps its original PDF. The run revision prevents a cancelled worker from committing a late result. The reviewer-owned status response is available at `GET /api/runs/:id?progress=1`; cancellation uses `POST /api/runs/:id/cancel`.
+
+Set `ARGUS_FAKE_SLOW=1` (or `miss`, `miss-fail`, `partial`, or `cache-hit`) with `npm run dev` and a disposable Supabase workspace. These modes do not call OCR providers. The slow page takes 25 seconds. Production ignores this flag.
+
+Preflight sends only the file's SHA-256. Production reuses an eligible whole-file extraction from the signed-in reviewer's cache, then rerates it against the current grids. A miss does not reveal the page count before upload. Typical time is computed once the count is known, from the reviewer's last 50 successful live observations (five minimum). Partial hits are simulated only.

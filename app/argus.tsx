@@ -1,12 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import monogram from "./argus-monogram.svg";
-import pixelIris from "./argus-logo-4-pixel-iris-animated.svg";
 import type { DragEvent, FormEvent } from "react";
 import type { OcrMode } from "../lib/ocr-status";
 import { ocrDescription } from "./ocr";
+import { ReadingStage } from "./reading-eye";
+import { useCachePreflight } from "./cache-preflight";
+import { paintResult, useAnalysisMotion } from "./analysis-motion";
+import { estimateCopy, type CacheCheck, type RunProgress } from "../lib/progress";
 import { RunResult } from "./report";
 import { SavedRun } from "./saved-runs";
 import { Profile, ProfileAvatar } from "./profile";
@@ -19,6 +22,37 @@ import type { ReviewSubmission, Run } from "./report";
 
 
 type Signup = Session | { confirmationRequired: true };
+
+type Surface = "intake" | "short" | "full" | "details";
+type Submission = { started: number; id?: string; cancelled?: boolean; timer?: ReturnType<typeof setTimeout> };
+
+function pending(run: Run) {
+  return run.status === "queued" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now());
+}
+
+function isCurrent(previous: Run, next: Run) {
+  if (previous.id !== next.id) return false;
+  if (previous.revision !== next.revision) return previous.revision > next.revision;
+  const before = previous.progress?.updatedAt ?? "";
+  const after = next.progress?.updatedAt ?? "";
+  return before > after || (before === after && previous.status === next.status &&
+    previous.pdf_cleanup_pending === next.pdf_cleanup_pending && previous.pdf_deleted_at === next.pdf_deleted_at &&
+    (Boolean(previous.result) || !next.result));
+}
+
+function progressFor(run: Run | null, started: number, preflight?: CacheCheck): RunProgress {
+  const now = new Date(started || Date.now()).toISOString();
+  const progress = run?.progress ?? {
+    stage: "uploading", status: run?.status === "queued" ? "queued" : "processing",
+    pagesDone: 0, pagesTotal: preflight?.pagesTotal ?? null, startedAt: run?.created_at ?? now,
+    stageStartedAt: now, updatedAt: now,
+  };
+  if (run && ["failed", "cancelled", "processing"].includes(run.status) && !pending(run)) {
+    return { ...progress, stage: run.status === "cancelled" ? "cancelled" : "failed",
+      status: run.status === "cancelled" ? "cancelled" : "failed" };
+  }
+  return progress as RunProgress;
+}
 
 type View = "landing" | "signin" | "workspace" | "profile";
 
@@ -64,10 +98,13 @@ export default function Argus({ initialView, section }: { initialView: View; sec
       showPath("/sign-in");
     }
     setView(start);
-    api<Session>("/api/session", { signal: controller.signal }).then(result => {
+    api<Session | null>("/api/session", { signal: controller.signal }).then(result => {
       if (controller.signal.aborted || credentialsSubmitted.current) return;
       setSession(result);
-      if (start !== "landing" && start !== "profile") {
+      if (start !== "landing" && !result) {
+        setView("signin");
+        showPath("/sign-in");
+      } else if (result && start !== "landing" && start !== "profile") {
         setView("workspace");
         if (url.pathname !== "/workspace") showPath("/workspace");
       }
@@ -222,7 +259,6 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   const [compact, setCompact] = useState(false);
   const [consent, setConsent] = useState(false);
   const [fileError, setFileError] = useState("");
-  const [uploadId, setUploadId] = useState<string>();
   const [restart, setRestart] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
@@ -232,18 +268,47 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   const [active, setActive] = useState<{ id: string } | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [working, setWorking] = useState(false);
-  const [processingId, setProcessingId] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
+  const [surface, setSurface] = useState<Surface>("intake");
+  const surfaceRef = useRef<Surface>("intake");
+  const stageSince = useRef(0);
+  const submission = useRef<Submission | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const lastProgress = useRef<RunProgress | null>(null);
+  const [beating, setBeating] = useState(false);
+  const [choreography, setChoreography] = useState(false);
+  const [arrived, setArrived] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const [toast, setToast] = useState(false);
+  const returnNotice = useRef<string | null>(null);
+  const [failedReason, setFailedReason] = useState("");
+  const { swap, interrupt } = useAnalysisMotion();
   const [error, setError] = useState("");
   const selected = useRef("");
   const focusRequested = useRef("");
   const pendingUpload = useRef<{ file: File; allowCloud: boolean; key: string } | null>(null);
   const live = useRef(false);
   const onAuthError = useRef(onUnauthorized);
-  const showUpload = Boolean(active && uploadId === active.id && !error &&
-    (!run || run.status === "queued" || (run.status === "processing" &&
-      (processingId === run.id || Date.parse(run.lease_until ?? "") > Date.now()))));
-  const showIntake = showUpload || (!run && (!active || Boolean(error)));
-  const uploading = showUpload || working;
+  const [forceConsent, setForceConsent] = useState(false);
+  const checked = useCachePreflight(file, onAuthError);
+  const preflight: CacheCheck | undefined = forceConsent ? { cache: "miss", pagesTotal: null, pagesCached: 0 } : checked;
+  const stageVisible = surface === "short" || surface === "full";
+  const showIntake = surface === "intake";
+  const uploading = submitting || working;
+
+  function show(next: Surface) {
+    if (next === "short" || next === "full") {
+      if (surfaceRef.current !== "short" && surfaceRef.current !== "full") stageSince.current = Date.now();
+    } else stageSince.current = 0;
+    surfaceRef.current = next;
+    setSurface(next);
+  }
+
+  function clearSubmission() {
+    clearTimeout(submission.current?.timer);
+    submission.current = null;
+    setSubmitting(false);
+  }
 
   useEffect(() => {
     const media = window.matchMedia("(width < 900px)");
@@ -276,11 +341,13 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   function record(next: Run) {
     if (!live.current || removedRuns.current.has(next.id)) return;
     if (selected.current === next.id) {
-      setRun((previous) => previous?.id === next.id && previous.revision > next.revision ? previous : next);
+      if (next.progress && next.status !== "complete" &&
+          (lastProgress.current?.updatedAt ?? "") <= next.progress.updatedAt) lastProgress.current = next.progress;
+      setRun(previous => previous && isCurrent(previous, next) ? previous : next);
     }
-    setRuns((previous) => {
-      const existing = previous.find((saved) => saved.id === next.id);
-      if (existing?.revision != null && existing.revision > next.revision) return previous;
+    setRuns(previous => {
+      const existing = previous.find(saved => saved.id === next.id);
+      if (existing && isCurrent(existing, next)) return previous;
       if (existing) return previous.map((saved) => saved.id === next.id ? next : saved);
       return [next, ...previous];
     });
@@ -293,6 +360,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
     if (RUN_LINK.test(window.location.hash)) {
       selected.current = id;
       setActive({ id });
+      show("details");
     }
     api<{ runs: Run[]; ocr: OcrMode }>("/api/runs", { signal: controller.signal }).then(({ runs, ocr }) => {
       if (controller.signal.aborted) return;
@@ -315,50 +383,191 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   useEffect(() => {
     if (!active) return;
     const { id } = active;
+    if (run?.id === id && !pending(run) && !run.pdf_cleanup_pending) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let cleanupDeadline: number | undefined;
     const controller = new AbortController();
     async function refresh() {
       try {
         const { run } = await api<{ run: Run }>(`/api/runs/${id}`, { signal: controller.signal });
         if (controller.signal.aborted) return;
         record(run);
-        if (run.pdf_cleanup_pending || run.status === "queued" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now())) {
-          timer = setTimeout(refresh, 5000);
-        }
-      } catch (error) { if (!controller.signal.aborted) fail(error); }
+        if (run.pdf_cleanup_pending) cleanupDeadline ??= Date.now() + 5000;
+        if (pending(run) || (run.pdf_cleanup_pending && Date.now() < (cleanupDeadline ?? 0))) timer = setTimeout(refresh, 1000);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (error instanceof RequestError && [401, 404, 410].includes(error.status)) {
+          if (error.status !== 401) { setFailedReason(error.message); show("full"); }
+          fail(error);
+        } else if (!cleanupDeadline || Date.now() < cleanupDeadline) timer = setTimeout(refresh, 2000);
+      }
     }
     void refresh();
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [active]);
+  }, [active, run?.pdf_cleanup_pending]);
+
+  const backgroundIds = runs.filter(saved => saved.id !== active?.id && pending(saved)).map(saved => saved.id).join(",");
+  useEffect(() => {
+    if (!backgroundIds) return;
+    const controller = new AbortController();
+    const refresh = async () => {
+      await Promise.all(backgroundIds.split(",").map(async id => {
+        try {
+          const { run: next } = await api<{ run: Run }>(`/api/runs/${id}`, { signal: controller.signal });
+          if (controller.signal.aborted) return;
+          record(next);
+          if (next.status === "complete" && document.hidden) notifyHiddenCompletion(next.id);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (error instanceof RequestError && error.status === 404) setRuns(previous => previous.filter(saved => saved.id !== id));
+          else if (error instanceof RequestError && error.status === 401) onAuthError.current();
+        }
+      }));
+      if (!controller.signal.aborted) timer = setTimeout(refresh, 2000);
+    };
+    let timer = setTimeout(refresh, 1000);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [backgroundIds]);
+
+  function notifyHiddenCompletion(id: string) {
+    document.title = "Argus · Done";
+    returnNotice.current = id;
+  }
 
   useEffect(() => {
-    if (run && !showUpload && focusRequested.current === run.id) {
-      focusRequested.current = "";
-      document.getElementById("result")?.focus();
-    } else if (!active && focusRequested.current === "intake") {
-      focusRequested.current = "";
-      document.getElementById("workspace-title")?.focus();
+    const original = document.title;
+    function onReturn() {
+      if (!document.hidden && returnNotice.current) {
+        if (returnNotice.current === selected.current && surfaceRef.current === "details") {
+          document.getElementById("result-title")?.focus({ preventScroll: true });
+        }
+        returnNotice.current = null;
+        setToast(true);
+        setAnnouncement("Analysis complete");
+      }
     }
-  }, [active, run, showUpload]);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      document.title = original;
+    };
+  }, []);
 
-  function select(id: string) {
+  useEffect(() => {
+    if (!run || selected.current !== run.id) return;
+    if (pending(run)) {
+      const p = run.progress;
+      document.title = p?.stage === "reading" && p.pagesTotal
+        ? `Argus · Reading ${p.page ?? p.pagesDone}/${p.pagesTotal}` : "Argus · Analyzing";
+      if (surfaceRef.current === "details" || (surfaceRef.current === "intake" && run.analysis_mode !== "instant")) {
+        show(run.analysis_mode === "instant" ? "short" : "full");
+      }
+    } else if (stageSince.current && run.status !== "complete") document.title = "Argus · Run details";
+    if (surfaceRef.current === "details" && !pending(run) && focusRequested.current === run.id) {
+      focusRequested.current = "";
+      document.getElementById("result-title")?.focus({ preventScroll: true });
+    }
+  }, [run, surface]);
+
+  const ready = run?.status === "complete" && Boolean(run.result);
+  const arriving = ready && surface !== "details";
+  useEffect(() => {
+    if (!run || !arriving) return;
+    const id = run.id;
+    let abandoned = false;
+    const valid = () => !abandoned && live.current && selected.current === id;
+    if (document.hidden) notifyHiddenCompletion(id);
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const wait = (time: number) => time > 0 ? new Promise(resolve => setTimeout(resolve, time)) : Promise.resolve();
+    void (async () => {
+      await paintResult();
+      const from = surfaceRef.current;
+      if (from === "short" || from === "full") {
+        const minimum = from === "short" ? 600 : 700;
+        await wait(minimum - (Date.now() - stageSince.current));
+        if (!valid()) return;
+        setBeating(true);
+        if (!reduced && !document.hidden) await wait(220);
+      }
+      if (!valid()) return;
+      const finished = await swap(from === "intake" ? "instant" : "complete", () => show("details"), valid);
+      if (!finished || !valid()) return;
+      setBeating(false);
+      setChoreography(!reduced && Boolean(document.startViewTransition));
+      setFile(null);
+      setConsent(false);
+      focusRequested.current = "";
+      if (!document.hidden) document.getElementById("result-title")?.focus({ preventScroll: true });
+      document.title = "Argus · Done";
+      setAnnouncement("Analysis complete");
+      clearSubmission();
+    })();
+    return () => { abandoned = true; };
+  }, [run?.id, ready, swap]);
+
+  function select(id: string, fromUpload = false) {
     closeHistory();
+    if (!fromUpload) {
+      document.title = "Argus · Workspace";
+      interrupt();
+      clearSubmission();
+      lastProgress.current = null;
+      setAttempt(n => n + 1);
+      setBeating(false);
+      setChoreography(false);
+      setFailedReason("");
+      setAnnouncement("");
+      const saved = runs.find(item => item.id === id);
+      show(saved && pending(saved) ? saved.analysis_mode === "instant" ? "short" : "full" : "details");
+    }
     if (selected.current !== id) setRun(null);
     selected.current = id;
-    focusRequested.current = id;
+    focusRequested.current = fromUpload ? "" : id;
     setActive({ id });
     window.history.replaceState(null, "", `/workspace#${id}`);
     onLocation(`/workspace#${id}`);
   }
 
   async function process(id: string) {
-    setProcessingId(id);
-    try {
-      const { run } = await api<{ run: Run }>(`/api/runs/${id}`, { method: "POST" });
-      record(run);
-    } finally {
-      if (live.current) setProcessingId(undefined);
+    const { run: next } = await api<{ run: Run }>(`/api/runs/${id}`, { method: "POST" });
+    if (selected.current === id) {
+      setFailedReason("");
+      lastProgress.current = null;
+      setAttempt(n => n + 1);
+      setAnnouncement("");
+      setBeating(false);
+      setChoreography(false);
+      stageSince.current = Date.now();
+      show(next.analysis_mode === "instant" ? "short" : "full");
+      setActive({ id });
     }
+    record(next);
+  }
+
+  async function cancel(id?: string) {
+    if (!id) {
+      if (submission.current) submission.current.cancelled = true;
+      setFailedReason("Cancelling after the upload finishes…");
+      setAnnouncement("Cancellation requested. The PDF is still uploading.");
+      return;
+    }
+    await action(async () => {
+      const { run: next } = await api<{ run: Run }>(`/api/runs/${id}/cancel`, { method: "POST" });
+      record(next);
+      setFailedReason("");
+    });
+  }
+
+  async function retryAnalysis() {
+    if (!active) { newAnalysis(); return; }
+    const { id } = active;
+    await action(async () => {
+      if (run && pending(run)) {
+        try { await api(`/api/runs/${id}/cancel`, { method: "POST" }); }
+        catch (error) { if (!(error instanceof RequestError && error.status === 409)) throw error; }
+      }
+      await process(id);
+    });
   }
 
   async function action(task: () => Promise<void>) {
@@ -371,6 +580,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
 
   function chooseFile(next: File | null) {
     if (!next) return;
+    setForceConsent(false);
     if ((!next.name.toLowerCase().endsWith(".pdf") && next.type !== "application/pdf") ||
       !next.size || next.size > 20 * 1024 * 1024) {
       if (picker.current) picker.current.value = "";
@@ -401,33 +611,81 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    if (!file || !consent || fileError || uploading || !ocr) return;
+    if (!file || !preflight || (preflight.cache !== "hit" && !consent) || fileError || uploading) return;
     const data = new FormData(form);
     data.set("pdf", file);
-    const allowCloud = ocr?.live === "ready" && data.get("allowCloud") === "true";
-    if (!allowCloud) data.delete("allowCloud");
+    const allowCloud = preflight.cache !== "hit" && consent;
+    if (allowCloud) data.set("allowCloud", "true");
+    else data.delete("allowCloud");
     if (pendingUpload.current?.file !== file || pendingUpload.current.allowCloud !== allowCloud) {
       pendingUpload.current = { file, allowCloud, key: crypto.randomUUID() };
     }
     const key = pendingUpload.current.key;
-    await action(async () => {
-      const uploaded = await api<{ run: Run }>("/api/runs", {
+    lastProgress.current = null;
+    setAttempt(n => n + 1);
+    const request: Submission = { started: Date.now() };
+    submission.current = request;
+    setSubmitting(true);
+    setAnnouncement("");
+    setFailedReason("");
+    setError("");
+    const current = () => live.current && submission.current === request;
+    if (preflight.cache === "hit") {
+      request.timer = setTimeout(() => {
+        if (!current()) return;
+        show("short");
+        request.timer = setTimeout(() => { if (current()) show("full"); }, 7600);
+      }, 400);
+    } else {
+      void swap("live", () => show("full"), current);
+    }
+    try {
+      const uploaded = await api<{ runId: string; mode: "instant" | "live"; cache: CacheCheck["cache"]; pagesToOcr: number; run: Run }>("/api/runs", {
         method: "POST", body: data, headers: { "Idempotency-Key": key },
-      }).catch(error => {
-        if (!(error instanceof RequestError) || ![413, 415, 422].includes(error.status)) throw error;
-        if (live.current) setFileError(error.message);
       });
-      if (!uploaded || !live.current) return;
-      const { run } = uploaded;
+      request.id = uploaded.runId;
+      let next = uploaded.run;
+      if (request.cancelled && pending(next)) {
+        try {
+          const result = await api<{ run: Run }>(`/api/runs/${request.id}/cancel`, { method: "POST" });
+          next = result.run;
+        } catch (error) {
+          if (!(error instanceof RequestError && error.status === 409)) throw error;
+          next = (await api<{ run: Run }>(`/api/runs/${request.id}`)).run;
+        }
+      }
+      if (!live.current) return;
+      if (!current()) { record(next); return; }
+      clearTimeout(request.timer);
+      if (uploaded.pagesToOcr > 0 || uploaded.mode === "live") {
+        if (surfaceRef.current !== "full") { interrupt(); show("full"); }
+      } else if (pending(next)) {
+        if (surfaceRef.current === "intake") show("short");
+        request.timer = setTimeout(() => {
+          if (current() && surfaceRef.current === "short") show("full");
+        }, Math.max(0, 8000 - (Date.now() - request.started)));
+      }
+      if (next.status === "failed" || next.status === "cancelled") show("full");
+      select(next.id, true);
+      if (uploaded.mode === "instant" && next.status === "complete") setArrived(next.id);
+      record(next);
       pendingUpload.current = null;
-      form.reset();
-      setFile(null);
-      setConsent(false);
-      setUploadId(run.id);
-      select(run.id);
-      record(run);
-      if (run.status === "queued") await process(run.id);
-    });
+      if (uploaded.mode === "live") { setFile(null); setConsent(false); }
+      setSubmitting(false);
+    } catch (error) {
+      if (!current()) return;
+      interrupt();
+      clearSubmission();
+      show("intake");
+      if (error instanceof RequestError && [400, 413, 415, 422].includes(error.status)) {
+        if (error.status === 422 && preflight.cache === "hit" && /consent/i.test(error.message)) {
+          // A saved extraction can be removed between preflight and submit.
+          setForceConsent(true);
+          setConsent(false);
+        }
+        setFileError(error.message);
+      } else fail(error);
+    }
   }
 
   async function confirm(id: string, value: ReviewSubmission) {
@@ -451,17 +709,32 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   function newAnalysis() {
     selected.current = "";
     closeHistory();
-    focusRequested.current = active ? "intake" : "";
+    interrupt();
+    clearSubmission();
+    setBeating(false);
+    setChoreography(false);
+    setFailedReason("");
+    setAnnouncement("");
+    show("intake");
+    focusRequested.current = "";
+    document.title = "Argus · Workspace";
     setActive(null);
     setRun(null);
     setError("");
     const path = session.preferences?.landing === "last" ? "/workspace?new=1" : "/workspace";
     window.history.replaceState(null, "", path);
     onLocation("/workspace?new=1");
-    if (!active) document.getElementById("workspace-title")?.focus();
+    setTimeout(() => document.getElementById("workspace-title")?.focus({ preventScroll: true }), 0);
   }
 
-  const progress = showUpload ? run?.ocr_progress : undefined;
+  // Keep the already mounted report subtree unchanged during the synchronous view swap.
+  const preparedResult = useMemo(() => run && <RunResult key={run.id} run={run}
+    preferences={session.preferences} working={working} onProcess={() => action(() => process(run.id))}
+    onConfirm={value => confirm(run.id, value)} />, [run, session.preferences, working]);
+
+  const preparing = !run && Boolean(failedReason && !submitting);
+  const progress = ready && !beating && lastProgress.current ? lastProgress.current :
+    progressFor(run, submission.current?.started ?? stageSince.current, preflight);
   const availability = ocr && ocrDescription(ocr);
   const query = historyQuery.trim().toLowerCase();
   const visibleRuns = runs.filter(item => {
@@ -476,7 +749,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
         {compact && <button className="button secondary" type="button" onClick={closeHistory}>Close</button>}
       </div>
       <button className="button secondary new-analysis" type="button" aria-current={showIntake ? "page" : undefined}
-        disabled={uploading && showIntake} onClick={newAnalysis}>New analysis</button>
+        onClick={newAnalysis}>New analysis</button>
     </div>
     {runs.length > 0 && <div className="history-controls">
       <input type="search" aria-label="Search saved runs" value={historyQuery} placeholder="Search runs"
@@ -494,18 +767,23 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
       </div>
     </div>}
     {visibleRuns.length > 0 ? <ul className="history-list" aria-label="Saved policy runs">{visibleRuns.map(item =>
-      <SavedRun key={item.id} run={item} personal={session.personal} preferences={session.preferences} current={active?.id === item.id && !showIntake}
+      <SavedRun key={item.id} run={item} personal={session.personal} preferences={session.preferences} current={active?.id === item.id} arrived={arrived === item.id}
         onOpen={() => {
           setError("");
-          setUploadId(undefined);
           select(item.id);
         }} onManage={() => setManaged(item)} />)}</ul> :
       <p className="history-empty" role="status">{runs.length ? "No runs match this filter." :
         historyLoaded ? (ocr ? "Your first analysis will appear here." : "Saved runs are unavailable.") : "Loading saved runs…"}</p>}
   </>;
-  const submitHint = !ocr ? "Wait for OCR availability." : !file && !consent ? "Choose a PDF and check the box to continue."
-    : !file ? "Choose a PDF to continue." : !consent ? "Check the box to continue."
-    : ocr.live !== "ready" && !ocr.cache ? "Your PDF will be saved. OCR is currently unavailable." : "";
+  const hit = preflight?.cache === "hit";
+  const remaining = preflight?.pagesTotal != null ? preflight.pagesTotal - preflight.pagesCached : null;
+  const expectation = !preflight ? "" : hit ? "Analyzed before. Result is instant, no external OCR needed." :
+    `${preflight.cache === "partial" ? "Some pages are already analyzed." : "New PDF."} ${remaining != null
+      ? `Live OCR for ${remaining} of ${preflight.pagesTotal} pages, ${preflight.estimatedSeconds
+        ? `usually ${estimateCopy(preflight.estimatedSeconds)}` : "this can take a few minutes"}.`
+      : "Live OCR can take a few minutes."}`;
+  const submitHint = !file ? "Choose a PDF to continue." : !preflight ? "Checking for saved analysis…" :
+    !hit && !consent ? "Check the box to allow live OCR." : "";
 
   return <div className="workspace">
     {compact ? <dialog ref={drawer} className="history history-drawer" id="history" aria-labelledby="history-title"
@@ -533,16 +811,30 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
           if (selected.current === managed.id) newAnalysis();
           else document.getElementById("history")?.focus();
         }} />}
-      {!showIntake && run ? <RunResult key={run.id} run={run} preferences={session.preferences} working={working} processing={processingId === run.id}
-        onProcess={() => action(() => process(run.id))} onConfirm={(value) => confirm(run.id, value)} /> :
-        !showIntake ? <p className="loading" role="status">Opening saved run…</p> :
-        <section className="intake" aria-labelledby="workspace-title">
+      <div className="analysis-region" data-choreography={choreography}>
+        {run && (surface === "details" || arriving) && <div className="analysis-preload" data-preload={arriving} inert={arriving}>
+          {preparedResult}
+        </div>}
+        {surface === "details" && !run && <p className="loading" role="status">Opening saved run…</p>}
+        {(showIntake || stageVisible) && <section className="intake analysis-entry" aria-labelledby="workspace-title">
           <header className="intake-heading"><p className="page-eyebrow">Policy check</p>
             <h1 id="workspace-title" tabIndex={-1}>New analysis</h1>
             <div className="title-rule" aria-hidden="true" />
             <p>Check own damage and third-party commission against the insurer’s rate card.</p>
           </header>
-          <form className="upload" onSubmit={upload} aria-busy={uploading}>
+          {stageVisible ? <div className="analysis-card">
+            <ReadingStage key={attempt}
+              progress={preparing ? { ...progress, stage: "failed", status: "failed" } : progress} short={surface === "short"}
+              beating={beating} reason={failedReason || run?.error || (run?.status === "processing" && !pending(run)
+                ? "The analysis was interrupted. Retry from your saved original." : null)}
+              disabled={working || (submitting && Boolean(failedReason))}
+              onCancel={() => void cancel(active?.id ?? submission.current?.id)} onRetry={() => void retryAnalysis()}
+              onDetails={() => {
+                if (run) { focusRequested.current = run.id; show("details"); }
+                else newAnalysis();
+              }} />
+          </div> :
+          <form className="upload intake-form analysis-card" onSubmit={upload} aria-busy={uploading}>
             <fieldset disabled={uploading}>
               <div className="file-control" data-dragging={dragging} data-selected={Boolean(file)} data-error={Boolean(fileError)}
                 onDragOver={event => {
@@ -556,14 +848,10 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
                 }} onDrop={dropFile}>
                 <input ref={picker} id="policy-pdf" name="pdf" type="file" accept=".pdf,application/pdf" hidden
                   aria-label="Choose PDF" onChange={event => chooseFile(event.target.files?.[0] ?? null)} />
-                {uploading ? <div className="upload-progress" role="status">
-                  <Image src={pixelIris} alt="" width={96} height={96} unoptimized />
-                  <p>{progress ? `${progress.completed} of ${progress.total} ${progress.total === 1 ? "page" : "pages"} checked` : "Analyzing your policy…"}</p>
-                </div> : <>
                   <button ref={choose} type="button" className="file-picker" onClick={() => picker.current?.click()}
                     aria-label={file ? "Replace PDF" : "Choose PDF"}
                     aria-describedby={fileError ? "pdf-selection pdf-limit pdf-error" : "pdf-selection pdf-limit"}>
-                    <svg className="file-mark" viewBox="0 0 32 36" width="48" height="48" aria-hidden="true">
+                    <svg className="file-mark intake-eye-transfer" viewBox="0 0 32 36" width="48" height="48" aria-hidden="true">
                       <path d="M6 2h13l7 7v23a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm13 0v7h7" />
                       {file ? <path d="m10 21 4 4 7-8" /> : <path d="M10 17h10m-10 6h7" />}
                     </svg>
@@ -576,13 +864,16 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
                   {file && <button className="button secondary remove-file" type="button" onClick={() => {
                     if (picker.current) picker.current.value = "";
                     setFile(null);
+                    setForceConsent(false);
                     setConsent(false);
                     setFileError("");
                     setError("");
                     choose.current?.focus();
                   }}>Remove</button>}
                   {fileError && <p id="pdf-error" className="file-error" role="alert">{fileError}</p>}
-                </>}
+              </div>
+              <div className="cache-chip-row" aria-live="polite" aria-atomic="true">
+                {expectation && <span className="cache-chip" key={expectation} data-hit={hit}>{expectation}</span>}
               </div>
               <p className="intake-value">You get the commission rate, the exact grid cell it came from, or a clear 'cannot determine'.</p>
               <div className="upload-consent">
@@ -593,23 +884,29 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
                     {availability && <p>{availability.detail}</p>}
                   </div>
                 </div>
-                {ocr && <label className="consent">
-                  <input name={ocr.live === "ready" ? "allowCloud" : undefined} type="checkbox" value="true" checked={consent}
-                    onChange={event => setConsent(event.target.checked)} />
-                  <span>{ocr.live === "ready" ? "This PDF is synthetic or de-identified and approved for processing by external OCR services."
-                    : "I confirm I’m authorized to save this PDF in the workspace."}</span>
-                </label>}
+                <div className="consent-slot">
+                  {ocr && !hit && <label className="consent">
+                    <input name="allowCloud" type="checkbox" value="true" checked={consent}
+                      onChange={event => { setConsent(event.target.checked); if (fileError.includes("consent")) setFileError(""); }} />
+                    <span>This PDF is synthetic or de-identified and approved for processing by external OCR services.</span>
+                  </label>}
+                </div>
                 <div className="form-actions">
                   <button className="button primary" type="submit" aria-describedby={submitHint && !uploading ? "submit-hint" : undefined}
-                    disabled={uploading || !ocr || !file || !consent || Boolean(fileError)}>
-                    {uploading ? "Analyzing policy…" : "Analyze policy"}
+                    disabled={uploading || !file || !preflight || (!hit && !consent) || Boolean(fileError)}>
+                    {submitting ? "Opening analysis…" : "Analyze policy"}
                   </button>
                   {!uploading && submitHint && <p id="submit-hint">{submitHint}</p>}
                 </div>
               </div>
             </fieldset>
-          </form>
+          </form>}
         </section>}
+      </div>
+      <p className="sr-only" role="status" aria-atomic="true">{announcement}</p>
+      {toast && <div className="analysis-toast"><span>Analysis complete</span>
+        <button type="button" className="button secondary" onClick={() => setToast(false)}>Dismiss</button>
+      </div>}
     </div>
   </div>;
 }

@@ -151,11 +151,15 @@ function groundedOnPage(candidate: Candidate, lines: string[]) {
   const context = comparable(quote);
   const found = lines.filter(line => line.includes(` ${context} `));
   if (!context || !found.length) return false;
+  const previousInsurerLine = (field === "previous_insurer" || field === "insurer") &&
+    lines.some((line, index) => /^ name of (?:the )?insurer\b/.test(line) && line.includes(` ${context} `) &&
+      /^ previous (?:insurance|policy) (?:details|information)(?: :)? $/.test(lines[index - 1] ?? ""));
+  if (field === "insurer" && previousInsurerLine) return false;
   if (comparable(value) === context) {
     return documentHeading(candidate) && found.some(line => !/\b(previous|prior|old|expiring)\b/.test(line));
   }
   const previous = /\b(previous|prior)\b/.test(context);
-  if (field.startsWith("previous_") && !previous) return false;
+  if (field.startsWith("previous_") && !previous && !previousInsurerLine) return false;
   if (previous && (["insurer", "current_ncb", "policy_type", "start_date", "end_date", "business_type"].includes(field)
     || field.endsWith("_premium"))) return false;
   if (field.endsWith("_ncb") && !/\b(ncb|no claim bonus)\b/.test(context)) return false;
@@ -236,7 +240,11 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
       .sort((a, b) => a.page - b.page || a.reader.localeCompare(b.reader) || a.raw.localeCompare(b.raw));
     // Matching document headings can be cited on different pages.
     const corroboratedHeading = observed.size === 1 && headingReaders.size >= 2;
-    const match = corroboratedHeading ? [...observed.keys()][0] : [...observed].find(([, pages]) => [...pages.values()].some(readers => readers.size >= 2))?.[0];
+    const match = corroboratedHeading ? [...observed.keys()][0] : [...observed].find(([, pages]) => {
+      const groups = [...pages.values()];
+      return groups.some(readers => readers.size >= 2) ||
+        (field === "fuel" && new Set(groups.flatMap(readers => [...readers])).size >= 2);
+    })?.[0];
     let reason = "insufficient_agreement";
     let status: FieldDecision["status"] = "needs_review";
     let value = null;

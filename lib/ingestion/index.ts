@@ -77,11 +77,11 @@ export function storedPdfPages(pdf: Uint8Array): Promise<number> {
 }
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-async function renderPage(file: string, page: number): Promise<Buffer> {
+async function renderPage(file: string, page: number, signal?: AbortSignal): Promise<Buffer> {
   const image = await poppler("pdftoppm", [
     "-f", String(page), "-l", String(page), "-r", "225",
     "-scale-to", "2048", "-png", "-singlefile", file,
-  ]);
+  ], signal);
   if (!image.subarray(0, PNG.length).equals(PNG)) throw new PdfError("invalid_page_render");
   return image;
 }
@@ -99,19 +99,35 @@ export function extract(
   filename: string,
   allowCloud: boolean,
   reserveGemini?: (page: number) => Promise<boolean>,
-  progress?: (completed: number, total: number) => Promise<void>,
-  onSendToCloud?: () => void,
+  progress?: (completed: number, total: number, event: { page?: number; completedPages: number[]; partial?: { insurer?: string; vehicle?: string } }) => Promise<void>,
+  onSendToCloud?: (page: number) => void,
+  signal?: AbortSignal,
 ): Promise<Extraction> {
   return withPdf(pdf, async (file, count) => {
-    const deadline = AbortSignal.timeout(12 * 60_000);
+    const timeout = AbortSignal.timeout(12 * 60_000);
+    const deadline = signal ? AbortSignal.any([timeout, signal]) : timeout;
     const reads: PageRead[] = [];
     const failures: Extraction["reader_failures"] = {};
     const failedAttempts: Record<string, Record<string, number>> = {};
     const halted = new Map<Reader, string>();
     let nextPage = 1;
-    let completed = 0;
+    const completedPages: number[] = [];
+    const active = new Set<number>();
+    let reportedPage: number | undefined;
     let reporting = Promise.resolve();
-    await progress?.(0, count);
+    function reportPage(done = false) {
+      if (!progress) return Promise.resolve();
+      const page = active.values().next().value as number | undefined;
+      if (!done && page === reportedPage) return Promise.resolve();
+      reportedPage = page;
+      const fields = done ? decide(filename, reads, false) : undefined;
+      const value = (name: "insurer" | "make" | "model") => fields?.[name]?.status === "accepted" ? fields[name].value : null;
+      const partial = fields ? { insurer: value("insurer") || undefined,
+        vehicle: [value("make"), value("model")].filter(Boolean).join(" ") || undefined } : undefined;
+      const event = { page, completedPages: [...completedPages], partial };
+      reporting = reporting.then(() => progress(event.completedPages.length, count, event));
+      return reporting;
+    }
 
     async function read(
       lane: typeof READER_LANES[number], number: number, image: Buffer, peer?: Promise<PageRead | undefined>,
@@ -157,7 +173,7 @@ export function extract(
             if (!reserved) throw new ReaderError("quota_budget_exhausted");
             if (deadline.aborted) throw new ReaderError("ocr_deadline");
           }
-          onSendToCloud?.();
+          onSendToCloud?.(number);
           const reading = await readLive(reader, number, image, deadline);
           if (!await usable(reading)) throw new ReaderError("ocr_quote_unconfirmed");
           return reading;
@@ -176,18 +192,22 @@ export function extract(
       // Limit raster memory and concurrent provider requests on small hosts.
       while (nextPage <= count && !deadline.aborted) {
         const number = nextPage++;
-        const image = await renderPage(file, number);
+        active.add(number);
+        await reportPage();
+        signal?.throwIfAborted();
+        const image = await renderPage(file, number, signal);
         const independent = read(READER_LANES[1], number, image);
         const pageReads = await Promise.all([read(READER_LANES[0], number, image, independent), independent]);
         for (const reading of pageReads) if (reading) reads.push(reading);
-        if (!deadline.aborted && progress) {
-          const checked = ++completed;
-          reporting = reporting.then(() => progress(checked, count));
-          await reporting;
+        active.delete(number);
+        if (!deadline.aborted) {
+          completedPages.push(number);
+          await reportPage(true);
         }
       }
     }
     const workers = await Promise.allSettled(Array.from({ length: Math.min(count, 3) }, readPages));
+    signal?.throwIfAborted();
     const failedWorker = workers.find(worker => worker.status === "rejected");
     if (failedWorker) throw failedWorker.reason;
     if (Object.keys(failedAttempts).length) console.warn("Argus OCR provider failures", failedAttempts);

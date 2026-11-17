@@ -7,11 +7,12 @@ import { createClient } from "@supabase/supabase-js";
 import { decide } from "../../lib/ingestion/facts.ts";
 import { checksum, pdfObject } from "../../lib/upload.ts";
 import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
-import { verifiedOcrProfile } from "../../lib/verified-ocr.ts";
+import { applyRating } from "../../lib/report.ts";
+import { runStore } from "../../lib/runs.ts";
 
 const pdfFile = new URL("../../vaatun-starter-bundle/sample-policies/pvt-car-satp-go-digit.pdf", import.meta.url);
 
-function form(bytes: BlobPart, filename = "upload.pdf", allowCloud = false) {
+function form(bytes: BlobPart, filename = "upload.pdf", allowCloud = true) {
   const data = new FormData();
   data.set("pdf", new File([bytes], filename, { type: "application/pdf" }));
   if (allowCloud) data.set("allowCloud", "true");
@@ -103,12 +104,21 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     const upload = (filename: string, account = owner) => request("/api/runs", account, {
       method: "POST", headers: { "Idempotency-Key": key }, body: form(pdf, filename),
     });
+    const hashPath = `/api/cache/check?hash=${checksum(pdf)}`;
+    const signedOut = await request("/api/session", "");
+    assert.equal(signedOut.status, 200);
+    assert.equal(await signedOut.json(), null);
+    assert.equal((await request(hashPath, "")).status, 401);
+    assert.equal((await (await request(hashPath, owner)).json()).cache, "miss");
+    assert.equal((await request("/api/runs", owner, { method: "POST", body: form(pdf, "no-consent.pdf", false) })).status, 422);
     const response = await upload("unseen-synthetic.pdf");
     assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
-    const { run } = await response.json();
+    const { run, mode, pagesToOcr } = await response.json();
+    assert.equal(mode, "live");
+    assert.ok(pagesToOcr > 0);
     runId = run.id;
     originals.push({ owner: users[0], run: run.id });
-    assert.equal(run.status, "queued");
+    assert.equal(run.status, "processing");
     const prior = await upload("unseen-synthetic.pdf");
     assert.equal((await prior.json()).run.id, runId);
     assert.equal((await upload("different-request.pdf")).status, 409);
@@ -118,7 +128,7 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     assert.equal(typeof otherWorkspace.ocr.cache, "boolean");
     assert.equal(typeof otherWorkspace.ocr.live, "string");
     const path = `/api/runs/${runId}`;
-    for (const [suffix, method] of [["", "GET"], ["/pdf", "GET"], ["", "POST"], ["", "PATCH"]]) {
+    for (const [suffix, method] of [["", "GET"], ["/pdf", "GET"], ["", "POST"], ["/cancel", "POST"], ["", "PATCH"]]) {
       assert.equal((await request(path + suffix, other, {
         method, ...(method === "PATCH" ? { headers: { "Content-Type": "application/json" }, body: "{}" } : {}),
       })).status, 404);
@@ -127,13 +137,11 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     const { data: publicData } = supabase.storage.from("argus-policy-pdfs").getPublicUrl(pdfObject(users[0], runId!));
     assert.ok(!(await fetch(publicData.publicUrl)).ok);
     assert.equal((await request(path, owner, { method: "POST", headers: { Origin: "https://other.test" } })).status, 403);
-    const results = await Promise.all([
-      request(path, owner, { method: "POST" }), request(path, owner, { method: "POST" }),
-    ]);
-    assert.deepEqual(results.map(result => result.status).sort(), [200, 202]);
     const stored = await completed(runId!, owner);
     assert.equal(stored.status, "complete", stored.error);
     assert.equal(stored.revision, 2);
+    assert.equal(stored.progress.stage, "complete");
+    assert.equal(stored.progress.pagesDone, stored.progress.pagesTotal);
     assert.equal(stored.result.checksum, checksum(pdf));
     assert.ok(["resolved", "unsupported", "ambiguous"].includes(stored.result.status));
     const history = await (await request("/api/runs", owner)).json();
@@ -154,33 +162,46 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     assert.equal((await request(path + "/pages?page=" + (pages + 1), owner)).status, 404);
 
     const cachedFile = "reviewed-input.pdf";
-    const { error: seedError } = await supabase.from("argus_ocr_cache").insert({
-      owner_id: users[0], checksum: checksum(pdf), profile: verifiedOcrProfile(),
-      extraction: {
-        filename: cachedFile, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
-        reader_failures: {}, clarifications: [],
-        fields: { make: { value: "private-test-marker", status: "accepted", reason: "independent_agreement",
-          evidence: [{ file: cachedFile, page: 1, quote: "Private test marker" }] } },
-      },
-      grounded_text: [{ page: 1, text: "Private test marker" }],
+    const candidates = [
+      { field: "insurer", value: "Go Digit General Insurance Ltd.", quote: "Go Digit General Insurance Ltd.", box: null },
+      { field: "policy_type", value: "Digit Private Car Liability Only Policy", quote: "Digit Private Car Liability Only Policy", box: null },
+      { field: "rto", value: "UP78", quote: "RTO: UP78", box: null },
+      { field: "fuel", value: "Petrol", quote: "Fuel type: Petrol", box: null },
+      { field: "engine_cc", value: "1086", quote: "Engine capacity: 1086 cc", box: null },
+    ] as const;
+    const reads = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+      reader, model: "test", page: 1, transcript: candidates.map(candidate => candidate.quote).join("\n"),
+      candidates: [...candidates],
+    }));
+    const report = applyRating({
+      filename: cachedFile, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
+      reader_failures: {}, clarifications: [], fields: decide(cachedFile, reads),
     });
-    assert.ifError(seedError);
+    assert.equal(report.status, "resolved");
+    assert.equal(report.tp.rate, "29.5");
+    await runStore(supabase, users[0]).cacheOcr({ ...stored, result: report });
+    const { data: cache, error: cacheError } = await supabase.from("argus_ocr_cache").select("grounded_text")
+      .eq("owner_id", users[0]).single();
+    assert.ifError(cacheError);
+    assert.ok(cache.grounded_text.some(({ page, text }: { page: number; text: string }) => page === 1 && text === "RTO: UP78"));
+    assert.equal((await (await request(hashPath, owner)).json()).cache, "hit");
+    assert.equal((await (await request(hashPath, other)).json()).cache, "miss");
     let duplicateId = "";
     for (const [i, cookie] of [owner, other].entries()) {
-      const response = await request("/api/runs", cookie, { method: "POST", body: form(pdf, "renamed.pdf") });
+      const response = await request("/api/runs", cookie, { method: "POST", body: form(pdf, "renamed.pdf", i !== 0) });
       assert.equal(response.status, 201);
-      const { run: next } = await response.json();
+      const { run: next, mode } = await response.json();
       originals.push({ owner: users[i], run: next.id });
-      const result = await request(`/api/runs/${next.id}`, cookie, { method: "POST" });
-      assert.equal(result.status, 202);
+      assert.equal(mode, i === 0 ? "instant" : "live");
+      if (i === 0) assert.equal(next.status, "complete");
       const analyzed = await completed(next.id, cookie);
-      const marker = analyzed.result.fields.make;
+      const marker = analyzed.result.fields.insurer;
       if (i === 0) {
         duplicateId = next.id;
-        assert.equal(marker.value, "private-test-marker");
+        assert.equal(marker.value, "go digit general insurance ltd.");
         assert.equal(marker.evidence[0].file, "renamed.pdf");
       } else {
-        assert.notEqual(marker?.value, "private-test-marker");
+        assert.notEqual(marker?.value, "go digit general insurance ltd.");
       }
     }
 
@@ -232,9 +253,9 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     for (const [i, cookie] of [owner, other].entries()) {
       const response = await request("/api/runs", cookie, { method: "POST", body: form(pdf, "review-replay.pdf") });
       assert.equal(response.status, 201);
-      const { run: next } = await response.json();
+      const { run: next, mode } = await response.json();
       originals.push({ owner: users[i], run: next.id });
-      assert.equal((await request(`/api/runs/${next.id}`, cookie, { method: "POST" })).status, 202);
+      assert.equal(mode, i === 0 ? "instant" : "live");
       const replay = await completed(next.id, cookie);
       if (i === 0) {
         assert.equal(replay.result.fields.engine_cc.value, "1086");

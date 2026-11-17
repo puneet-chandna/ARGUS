@@ -50,7 +50,9 @@ async function signIn(page: Page, reviewer: Reviewer) {
 
 async function uploadPdf(page: Page, name: string, buffer: Buffer) {
   await page.locator('input[type="file"]').setInputFiles({ name, mimeType: "application/pdf", buffer });
-  await page.getByRole("checkbox").check();
+  await expect(page.locator(".cache-chip-row .cache-chip")).toBeVisible();
+  const consent = page.getByRole("checkbox");
+  if (await consent.isVisible()) await consent.check();
   await page.getByRole("button", { name: "Analyze policy" }).click();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible({ timeout: 15_000 });
@@ -120,6 +122,9 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   const name = "unseen-review-policy.pdf";
   await page.goto("/sign-in");
   await signIn(page, reviewer);
+  expect((await page.request.patch("/api/profile", { headers: { Origin: new URL(page.url()).origin },
+    data: { part: "data", retention_days: null, delete_originals: true },
+  })).status()).toBe(200);
   await uploadPdf(page, name, syntheticPdf("Engine capacity: 998 cc", "Private Car Liability Only Policy", "Insurer: Example General Insurance"));
   await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("Undetermined");
 
@@ -132,6 +137,8 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   ];
   const { data, error } = await reviewer.db.from("argus_runs").select("id,result").eq("owner_id", reviewer.id).single();
   expect(error).toBeNull();
+  const pdfUrl = `/api/runs/${data!.id}/pdf`;
+  expect((await page.request.get(pdfUrl)).status()).toBe(200);
   const update = await reviewer.db.from("argus_runs")
     .update({ result: { ...data!.result, fields: decide(name, sources), reader_failures: {} } })
     .eq("id", data!.id).eq("owner_id", reviewer.id);
@@ -166,6 +173,12 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   const facts = page.getByRole("tabpanel", { name: /Policy facts/ });
   await expect(facts.getByText("998", { exact: true })).toBeVisible();
   await expect(facts.getByText("Reviewer confirmed on Policy page 1", { exact: true })).toBeVisible();
+  expect((await page.request.get(pdfUrl)).status()).toBe(410);
+  await expect.poll(async () => {
+    const { data, error } = await reviewer.db.from("argus_runs").select("pdf_deleted_at").eq("owner_id", reviewer.id).single();
+    if (error) throw error;
+    return data.pdf_deleted_at;
+  }).not.toBeNull();
 });
 
 test("profile saves real settings and protects profile data, runs and audit history", async ({ page, reviewer, browser }) => {
@@ -184,6 +197,18 @@ test("profile saves real settings and protects profile data, runs and audit hist
   await save.click();
   await expect(page.getByRole("status").getByText("Personal details saved.")).toBeVisible();
   await page.reload();
+  await expect(name).toHaveValue("Argus Reviewer");
+  const avatar = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lE8AAAAASUVORK5CYII=", "base64");
+  await page.locator('input[type="file"][accept="image/png,image/jpeg"]').setInputFiles({
+    name: "test-photo.png", mimeType: "image/png", buffer: avatar,
+  });
+  await page.getByRole("button", { name: "Save photo" }).click();
+  await expect(page.getByRole("status").getByText("Profile photo saved.")).toBeVisible();
+  await page.reload();
+  const storedPhoto = await page.request.get("/api/profile/avatar");
+  expect(storedPhoto.status()).toBe(200);
+  expect(storedPhoto.headers()["cache-control"]).toBe("private, no-store");
+  expect(await storedPhoto.body()).toEqual(avatar);
   await expect(name).toHaveValue("Argus Reviewer");
   await page.setViewportSize({ width: 390, height: 844 });
   const content = await page.locator(".profile-content").boundingBox();
@@ -210,7 +235,7 @@ test("profile saves real settings and protects profile data, runs and audit hist
   expect(outsider.error).toBeNull();
   const secondary = await browser.newContext({ baseURL: origin });
   try {
-    // Submit a policy but do not start external OCR. Approval and analysis are independent actions.
+    // The disposable app records approval and runs with OCR providers disabled.
     const upload = await page.request.post("/api/runs", { headers: { Origin: origin }, multipart: {
       allowCloud: "true", pdf: { name: "approved-test.pdf", mimeType: "application/pdf", buffer: syntheticPdf("Synthetic policy") },
     } });
@@ -224,6 +249,7 @@ test("profile saves real settings and protects profile data, runs and audit hist
     await second.goto("/sign-in");
     await signIn(second, { email: outsiderEmail, password, id: outsider.data.user!.id, db: reviewer.db });
     expect((await second.request.get(`/api/runs/${run.id}`)).status()).toBe(404);
+    expect((await second.request.get("/api/profile/avatar")).status()).toBe(404);
     expect((await second.request.get(`/api/profile?owner_id=${reviewer.id}`).then(response => response.json())).personal.display_name).toBe("");
     const secondActivity = await second.request.get(`/api/profile?view=activity&owner_id=${reviewer.id}`).then(response => response.json());
     expect(secondActivity.activity.events.map((e: { action: string }) => e.action)).toEqual(["signed_in"]);
@@ -235,6 +261,10 @@ test("profile saves real settings and protects profile data, runs and audit hist
       expect((await userClient.from("argus_runs").select("*").eq("id", run.id)).data).toEqual([]);
       expect((await userClient.from("argus_profiles").update({ display_name: "Changed" }).eq("owner_id", reviewer.id)).error).not.toBeNull();
     }
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Remove photo" }).click();
+    await expect(page.getByRole("status").getByText("Profile photo removed.")).toBeVisible();
+    expect((await page.request.get("/api/profile/avatar")).status()).toBe(404);
     await page.getByRole("link", { name: "Preferences", exact: true }).click();
     await page.getByRole("combobox", { name: "Density", exact: true }).selectOption("compact");
     await page.getByRole("button", { name: "Save changes" }).click();

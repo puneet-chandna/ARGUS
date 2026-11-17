@@ -1,12 +1,11 @@
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
-import processingMonogram from "./argus-processing.svg";
-import stillMonogram from "./icon.svg";
+import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import { commissionLabel, type Preferences } from "../lib/profile-settings";
 import { ExportButton } from "./profile-export-button";
 import { readerNotice } from "./ocr";
 import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "../lib/review-fields";
+import type { RunProgress } from "../lib/progress";
 import "./workspace.css";
 
 export type Source = {
@@ -51,7 +50,7 @@ export type Run = {
   pinned?: boolean;
   deleting_at?: string | null;
   checksum: string;
-  status: "queued" | "processing" | "complete" | "failed";
+  status: "queued" | "processing" | "complete" | "failed" | "cancelled";
   decision?: Decision | null;
   result?: Report | null;
   error?: string | null;
@@ -60,7 +59,10 @@ export type Run = {
   lease_until?: string | null;
   pdf_deleted_at?: string | null;
   pdf_cleanup_pending?: boolean;
-  ocr_progress?: { completed: number; total: number } | null;
+  progress?: RunProgress | null;
+  analysis_mode?: "instant" | "live" | null;
+  ocr_mode?: "external" | "local" | null;
+  duration_ms?: number | null;
 };
 
 type Clarification = { field: string; value: string; page: number };
@@ -73,6 +75,7 @@ const labels = {
   complete: "Completed",
   success: "Success",
   failed: "Interrupted",
+  cancelled: "Cancelled",
   resolved: "Resolved",
   ambiguous: "Needs review",
   unsupported: "Unsupported",
@@ -86,14 +89,14 @@ const statusIcons = {
   failed: "M8 4v4m0 3v.5",
 } as const;
 
-export function RunStatus({ status }: { status: keyof typeof labels }) {
+export function RunStatus({ status, text }: { status: keyof typeof labels; text?: string }) {
   return <span className={`state ${status}`}>
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
       strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="8" cy="8" r="7" />
       {status in statusIcons && <path d={statusIcons[status as keyof typeof statusIcons]} />}
     </svg>
-    {labels[status]}
+    {text ?? labels[status]}
   </span>;
 }
 
@@ -132,13 +135,13 @@ function gridSource(source: Source) {
   return Boolean(source.sheet || source.row != null);
 }
 
-function Citation({ source, pdf, showFile = true }: { source: Source; pdf: string; showFile?: boolean }) {
+function Citation({ source, pdf, showFile = true, highlight }: { source: Source; pdf: string; showFile?: boolean; highlight?: boolean }) {
   if (gridSource(source)) {
     const location = source.sheet
       ? `${source.sheet}${source.cells ? `!${source.cells}` : ""}`
       : `Page ${source.page} · ${source.row}`;
     return <span className="run-grid-citation">
-      <span className="run-location">{location}</span>
+      <span className={highlight ? "run-location cited-cell" : "run-location"}>{location}</span>
       {showFile && <span>{source.file}</span>}
     </span>;
   }
@@ -489,7 +492,7 @@ function Facts({ entries, pdf, filename }: { entries: [string, Fact][]; pdf: str
 }
 
 function Trace({ steps, pdf }: { steps: Report["trace"]; pdf: string }) {
-  return <ol className="run-trace" role="list">{steps.map((step, index) => <li key={index}>
+  return <ol className="run-trace" role="list">{steps.map((step, index) => <li key={index} style={{ "--trace-index": index } as CSSProperties}>
     <span aria-hidden="true" className="run-trace-index">{index + 1}</span>
     <div>
       <p>{step.step}</p>
@@ -500,56 +503,9 @@ function Trace({ steps, pdf }: { steps: Report["trace"]; pdf: string }) {
 
 type Panel = "trace" | "facts";
 
-function AnalysisProgress({ progress }: { progress: Run["ocr_progress"] }) {
-  const [motionPaused, setMotionPaused] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(false);
-  useEffect(() => {
-    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReducedMotion(preference.matches);
-    update();
-    preference.addEventListener("change", update);
-    return () => preference.removeEventListener("change", update);
-  }, []);
-  const rating = progress && progress.completed === progress.total;
-  const title = rating ? "Checking commission rates" : "Reading the policy";
-  const status = progress
-    ? `${progress.completed} of ${progress.total} ${progress.total === 1 ? "page" : "pages"} checked`
-    : "Preparing pages for analysis";
-  const stages = ["PDF saved", "Check policy pages", "Calculate commission"];
-  const currentStage = rating ? 2 : 1;
-
-  return <section className="analysis-progress" aria-labelledby="analysis-progress-title">
-    <div className="analysis-status">
-      <Image className="run-processing-mark" src={motionPaused || reducedMotion ? stillMonogram : processingMonogram}
-        alt="" width={76} height={76} unoptimized loading="eager" />
-      <div>
-        <h2 id="analysis-progress-title">{title}</h2>
-        <p role="status">{status}</p>
-      </div>
-    </div>
-    <progress className="run-progress" aria-label="Policy pages checked"
-      value={progress?.completed} max={progress?.total} />
-    <ol className="analysis-stages" aria-label="Analysis steps">
-      {stages.map((stage, index) => <li key={stage} aria-current={index === currentStage ? "step" : undefined}
-        data-complete={index < currentStage}>
-        <span className="analysis-stage-mark" aria-hidden="true" />
-        {index < currentStage && <span className="sr-only">Complete. </span>}
-        {stage}
-      </li>)}
-    </ol>
-    <footer className="analysis-footer">
-      <p>You can open another run. This analysis continues in the background.</p>
-      <button type="button" className="analysis-motion-control" onClick={() => setMotionPaused(paused => !paused)}>
-        {motionPaused ? "Resume logo animation" : "Pause logo animation"}
-      </button>
-    </footer>
-  </section>;
-}
-
-export function RunResult({ run, working, processing, onProcess, onConfirm, preferences }: {
+export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
   run: Run;
   working: boolean;
-  processing: boolean;
   preferences?: Preferences;
   onProcess: () => Promise<void>;
   onConfirm: (value: ReviewSubmission) => Promise<void>;
@@ -559,9 +515,8 @@ export function RunResult({ run, working, processing, onProcess, onConfirm, pref
   const tabButtons = useRef<Partial<Record<Panel, HTMLButtonElement>>>({});
   const pdf = run.pdf_deleted_at || run.pdf_cleanup_pending ? "" : `/api/runs/${run.id}/pdf`;
   const report = run.result;
-  const pending = run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now();
-  const analyzing = processing || pending;
-  const status = report?.status ?? (analyzing ? "processing" : run.status === "processing" ? "failed" : run.status);
+  const status = report?.status ?? (run.status === "processing" ? "failed" : run.status);
+  const seconds = Math.round((run.duration_ms ?? 0) / 1000);
   const notice = readerNotice(report?.reader_failures);
   const facts = Object.entries(report?.fields ?? {});
   const confirmed = facts.filter(([, fact]) => fact.value != null);
@@ -574,6 +529,7 @@ export function RunResult({ run, working, processing, onProcess, onConfirm, pref
   const traceStart = report?.rating_trace_start ?? 0;
   const decisions = report?.trace.slice(traceStart) ?? [];
   const policyTrace = report?.trace.slice(0, traceStart) ?? [];
+  const cited = decisions.findLast(step => step.sources.some(gridSource))?.sources.find(gridSource);
   const [reviewQueue, setReviewQueue] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Clarification>>({});
   const [confirmationMessage, setConfirmationMessage] = useState("");
@@ -610,12 +566,21 @@ export function RunResult({ run, working, processing, onProcess, onConfirm, pref
     activateTab(tabs[next].id);
   }
 
-  return <section id="result" className="run-report" aria-labelledby="result-title" tabIndex={-1}>
+  return <section id="result" className="run-report analysis-card" aria-labelledby="result-title" tabIndex={-1}>
     <header className="run-head">
-      <div className="run-heading">
-        <h1 id="result-title">{run.display_name || run.filename}</h1>
+      <div className="result-identity">
+        {report && <span className="result-eye" aria-hidden="true"><svg viewBox="0 0 32 24" fill="none">
+          <path d="M2 12Q16-3 30 12Q16 27 2 12Z" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="13" y="9" width="6" height="6" rx="1" fill="currentColor" />
+        </svg></span>}
+        <div className="run-heading">
+        <h1 id="result-title" tabIndex={-1}>{run.display_name || run.filename}</h1>
         {run.display_name && <p className="run-original-name">{run.filename}</p>}
-        <p className="run-state" role="status"><RunStatus status={run.deleting_at ? "deleting" : status} /></p>
+        <p className="run-state"><RunStatus status={run.deleting_at ? "deleting" : status} /></p>
+        {report && run.analysis_mode && <p className="cache-chip" data-hit={run.analysis_mode === "instant"}>
+          {run.analysis_mode === "instant" ? "From saved analysis" : `${run.ocr_mode === "local" ? "Local analysis" : "Live OCR"}, ${seconds >= 60 ? `${Math.floor(seconds / 60)}m ` : ""}${seconds % 60}s`}
+        </p>}
+        </div>
       </div>
       {!run.deleting_at && pdf && <a className="button secondary run-open-original" href={pdf} target="_blank" rel="noreferrer" aria-label="Open original PDF in a new tab">
         Open original PDF
@@ -634,6 +599,7 @@ export function RunResult({ run, working, processing, onProcess, onConfirm, pref
         </dl>
         {sharedReason && <p className="run-shared-reason">{report.od.reason}</p>}
         <div className="run-confidence">
+          {cited && <p className="result-grid-evidence">Grid evidence: <Citation source={cited} pdf={pdf} highlight /></p>}
           <p><strong>{report.confidence.level} confidence.</strong> {report.confidence.reason}</p>
           {decisions.length > 0 && <button type="button" className="run-evidence-link" onClick={() => {
             activateTab("trace");
@@ -714,11 +680,11 @@ export function RunResult({ run, working, processing, onProcess, onConfirm, pref
           </>)}
         </div>)}
       </div>
-    </> : analyzing ? <AnalysisProgress progress={run.ocr_progress} /> : <div className="run-job">
+    </> : <div className="run-job">
       <div>
         <p>{run.error || "The original PDF is saved. You can resume analysis from this run."}</p>
         {run.status !== "complete" && <button type="button" className="button primary" onClick={onProcess} disabled={working}>
-          {status === "failed" ? "Retry analysis" : "Resume analysis"}
+          {["failed", "cancelled"].includes(status) ? "Retry analysis" : "Resume analysis"}
         </button>}
       </div>
     </div>}

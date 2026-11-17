@@ -353,7 +353,7 @@ function PreferenceForm({ data, account, update, confirm, task, busy, onDirty, h
               : <p className="profile-meta">Timed retention: Not available yet. Runs are kept until deleted{account.preferences.retention_days ? " or timed cleanup resumes" : ""}.</p>}
             <label className="consent"><input type="checkbox" checked={fields.delete_originals} aria-describedby="original-hint"
               onChange={event => setFields({ ...fields, delete_originals: event.target.checked })} />Delete original PDFs after analysis</label>
-            <p id="original-hint" className="profile-meta">Applies to new completed analyses. The result remains, but you can’t reopen or manually review the original PDF.</p>
+            <p id="original-hint" className="profile-meta">Argus keeps the original until any required review is complete. The result stays in your history after the PDF is deleted.</p>
             <label className="consent"><input type="checkbox" checked disabled aria-describedby="ocr-lock" />Always ask before sending a PDF to external OCR</label>
             <p id="ocr-lock" className="profile-meta">Argus asks every time. This cannot be turned off.</p>
           </fieldset>

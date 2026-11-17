@@ -245,7 +245,6 @@
 .file-control[data-dragging="true"] .file-mark { color: var(--primary); }
 .file-control[data-error="true"] { border-color: var(--danger); }
 .file-error { justify-self: center; margin: 0 16px 16px; color: var(--danger); }
-.upload-progress { display: grid; gap: 8px; place-content: center; justify-items: center; padding: 16px; color: var(--text-muted); }
 .intake-value { max-width: none; margin-top: 8px; color: var(--text-muted); }
 .upload-consent { display: grid; gap: 8px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
 .ocr-mode :is(strong, p) { font-size: .8125rem; }

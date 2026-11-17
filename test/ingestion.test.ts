@@ -234,11 +234,19 @@ test("OCR tries Sarvam first and only reserves Gemini quota", async t => {
 
   process.env.ARGUS_WRITE_OCR_CACHE = "0";
   const checked: number[] = [];
+  const active: (number | undefined)[] = [];
   waitForPeers = true;
   const timer = setTimeout(() => peers.reject(new Error("Expected three concurrent page reads")), 5000);
   const multi = await extract(syntheticPdf("First", "Second", "Third", "Fourth"), "multi.pdf", true, undefined,
-    async completed => { checked.push(completed); }).finally(() => clearTimeout(timer));
-  assert.deepEqual(checked, [0, 1, 2, 3, 4]);
+    async (completed, _total, event) => {
+      checked.push(completed);
+      active.push(event.page);
+      assert.equal(new Set(event.completedPages).size, completed);
+      assert.ok(!event.page || !event.completedPages.includes(event.page));
+    }).finally(() => clearTimeout(timer));
+  assert.deepEqual([...new Set(checked)], [0, 1, 2, 3, 4]);
+  assert.equal(active[0], 1);
+  assert.equal(active.at(-1), undefined);
   assert.deepEqual(multi.reader_failures, {});
   assert.equal(arrivals, 4);
 });
@@ -271,4 +279,27 @@ test("Super VL preserves grounded fields when a response includes missing or mal
   assert.deepEqual(result.candidates, [{...valid, box: null}]);
   fields = [{ field: "engine_cc", value: 999, quote: "Engine capacity: 999 cc" }];
   await assert.rejects(readLive("nvidia-super-vl", 1, Buffer.from("image"), AbortSignal.timeout(5000)), /invalid_provider_response/);
+});
+
+test("independent fuel labels can agree across different pages without promoting partial OCR", () => {
+  const quote = "Fuel Type: CNG";
+  const reads = [
+    { reader: "sarvam" as const, page: 4, model: "test", transcript: quote,
+      candidates: [{ field: "fuel" as const, quote, value: "CNG", box: null }] },
+    { reader: "nvidia-super-vl" as const, page: 11, model: "test", transcript: quote,
+      candidates: [{ field: "fuel" as const, quote, value: "CNG", box: null }] },
+  ];
+  assert.equal(decide("policy.pdf", reads).fuel.value, "cng");
+  assert.equal(decide("policy.pdf", reads, false).fuel.value, null);
+  assert.equal(decide("policy.pdf", [reads[0], { ...reads[1], reader: "sarvam" }]).fuel.value, null);
+});
+
+test("a previous-insurance section grounds its insurer while unrelated headings do not", () => {
+  const value = "TATA AIG GENERAL INSURANCE CO. LTD.";
+  const quote = `Name of the Insurer: ${value}`;
+  const candidate = { field: "previous_insurer" as const, value, quote, box: null };
+  assert.ok(grounded(candidate, `Previous Insurance Details:\n${quote}`));
+  assert.ok(!grounded(candidate, `Proposed Insurance Details:\n${quote}`));
+  assert.ok(!grounded(candidate, `Previous Insurance Details:\nNominee Details:\n${quote}`));
+  assert.ok(!grounded({ ...candidate, field: "insurer" }, `Previous Insurance Details:\n${quote}`));
 });

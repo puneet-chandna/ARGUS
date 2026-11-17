@@ -1,13 +1,11 @@
 import { after } from "next/server";
 import { endpoint, HttpError, json, readJson } from "../../../../lib/http.ts";
-import { extract, PdfError, storedPdfPages } from "../../../../lib/ingestion/index.ts";
-import { applyRating, clarifyBatch, type Report } from "../../../../lib/report.ts";
+import { storedPdfPages } from "../../../../lib/ingestion/index.ts";
+import { applyRating, clarifyBatch } from "../../../../lib/report.ts";
 import { requiredReviewFields } from "../../../../lib/review-fields.ts";
 import { present, runStore } from "../../../../lib/runs.ts";
 import { reviewer, serviceClient } from "../../../../lib/supabase.ts";
-import { checksum } from "../../../../lib/upload.ts";
-import { EXTRACTION_VERSION } from "../../../../lib/ingestion/providers.ts";
-import { rebindExtraction, reuseConfirmations } from "../../../../lib/verified-ocr.ts";
+import { startAnalysis } from "../../../../lib/run-analysis.ts";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -16,9 +14,18 @@ async function context({ params }: Context) {
   return { store: runStore(serviceClient(), user.id), id: (await params).id };
 }
 
-export const GET = endpoint(async (_request, route: Context) => {
+export const GET = endpoint(async (request, route: Context) => {
   const { store, id } = await context(route);
   const run = await store.get(id);
+  if (new URL(request.url).searchParams.get("progress") === "1") {
+    const expired = run.status === "processing" && Date.parse(run.lease_until ?? "") <= Date.now();
+    return json({
+      stage: run.status === "complete" ? "complete" : run.status === "failed" || expired ? "failed" :
+        run.status === "cancelled" ? "cancelled" : "uploading",
+      pagesDone: 0, pagesTotal: run.pages_total, startedAt: run.created_at, stageStartedAt: run.created_at,
+      ...run.progress, ...(expired && { stage: "failed" }), status: expired ? "failed" : run.status,
+    });
+  }
   const result = run.result;
   if (result?.status === "ambiguous" && !result.review_fields) {
     return json({ run: present({ ...run, result: { ...result, review_fields: applyRating(result).review_fields } }) });
@@ -28,37 +35,9 @@ export const GET = endpoint(async (_request, route: Context) => {
 
 export const POST = endpoint(async (_request, route: Context) => {
   const { store, id } = await context(route);
-  const claim = await store.claim(id);
-  if (!claim) return json({ run: present(await store.get(id)) });
-
-  after(async () => {
-    let report: Report;
-    let ocrMode: "local" | "external" = "local";
-    try {
-      const { pdf } = await store.pdf(id);
-      const bytes = new Uint8Array(await pdf.arrayBuffer());
-      if (checksum(bytes) !== claim.checksum) throw new Error("pdf_checksum");
-      const [cached, reviewed] = await Promise.all([store.cachedOcr(claim), store.reviewedOcr(claim)]);
-      const reusable = cached ?? (reviewed?.extraction_version === EXTRACTION_VERSION &&
-        (!claim.allow_cloud || !Object.keys(reviewed.reader_failures).length) ? reviewed : null);
-      const extraction = reusable ? rebindExtraction(reusable, claim.filename)
-        : await extract(bytes, claim.filename, claim.allow_cloud, () => store.reserveGemini(claim),
-          (checked, total) => store.reportProgress(claim, checked, total).catch(() => {}),
-          () => { ocrMode = "external"; });
-      report = applyRating(reviewed && reusable !== reviewed ? reuseConfirmations(extraction, reviewed) : extraction);
-    } catch (error) {
-      const message = error instanceof PdfError
-        ? "The stored PDF could not be rendered."
-        : "Analysis could not finish. Retry from your saved original.";
-      await store.finish(claim, null, message, ocrMode);
-      return;
-    }
-    const completed = await store.finish(claim, report, null, ocrMode);
-    if (completed.revision === claim.revision + 1) {
-      await Promise.allSettled([store.cacheOcr(completed), store.cleanupOriginal(completed.id)]);
-    }
-  });
-  return json({ run: present(claim) }, 202);
+  const previous = await store.get(id);
+  const run = await startAnalysis(store, previous);
+  return json({ run: present(run) }, run.status === "processing" && run.revision > previous.revision ? 202 : 200);
 });
 
 export const PATCH = endpoint(async (request, route: Context) => {
@@ -85,7 +64,11 @@ export const PATCH = endpoint(async (request, route: Context) => {
   if (input.guided === true && remaining.length) {
     throw new HttpError(422, "Confirm the remaining policy details before recalculating.");
   }
-  return json({ run: present(await store.revise(run, reviewed)) });
+  const revised = await store.revise(run, reviewed);
+  if (revised.pdf_cleanup_pending) after(() => store.cleanupOriginal(id).catch(() => {
+    console.warn("Argus could not remove an original PDF queued for deletion.");
+  }));
+  return json({ run: present(revised) });
 });
 
 

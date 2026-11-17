@@ -5,8 +5,8 @@ import type { Run } from "./report";
 
 
 
-export function SavedRun({ run, current, onOpen, onManage, personal, preferences }: {
-  run: Run; current: boolean; onOpen: () => void; onManage: () => void; personal?: Personal; preferences?: Preferences;
+export function SavedRun({ run, current, arrived, onOpen, onManage, personal, preferences }: {
+  run: Run; current: boolean; arrived?: boolean; onOpen: () => void; onManage: () => void; personal?: Personal; preferences?: Preferences;
 }) {
   const row = useRef<HTMLLIElement>(null);
   const [detail, setDetail] = useState<Run>();
@@ -41,17 +41,19 @@ export function SavedRun({ run, current, onOpen, onManage, personal, preferences
     const rate = report?.[key].rate;
     return rate == null ? [] : [`${key.toUpperCase()} ${commissionLabel(rate, preferences)}`];
   }).join(" / ");
-  const status = run.deleting_at ? "deleting" : run.decision ?? report?.status ?? run.status;
+  const status = run.deleting_at ? "deleting" : run.decision ?? report?.status ??
+    (run.status === "processing" && Date.parse(run.lease_until ?? "") <= Date.now() ? "failed" : run.status);
   const title = run.display_name || [fact("insurer"), vehicle || fact("policy_type"), rates].filter(Boolean).join(" · ") ||
     (status === "resolved" ? "Commission determined" : status === "unsupported" ? "Outside rate card coverage" :
       status === "ambiguous" ? "Commission undetermined" : run.filename.replace(/\.pdf$/i, ""));
   const created = new Date(run.created_at);
 
-  return <li ref={row} className="history-row" data-current={current}>
+  return <li ref={row} className="history-row" data-current={current} data-arrived={arrived}>
     <button className="history-item" type="button" aria-current={current || undefined} onClick={onOpen}>
       <strong>{title}</strong>
       <time dateTime={run.created_at} title={created.toLocaleString("en-GB", { dateStyle: "full", timeStyle: "long", timeZone: personal?.time_zone ?? undefined })}>{profileDate(run.created_at, personal)}</time>
-      <span className="run-meta"><RunStatus status={status} />{run.pinned && <span>Pinned</span>}</span>
+      <span className="run-meta"><RunStatus status={status} text={status === "processing" && run.progress?.pagesTotal
+        ? `Analyzing ${run.progress.pagesDone}/${run.progress.pagesTotal}` : undefined} />{run.pinned && <span>Pinned</span>}</span>
       <span className="history-filename">{run.filename}</span>
     </button>
     <button type="button" className="history-manage" aria-label="Run actions"

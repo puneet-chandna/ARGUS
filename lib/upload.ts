@@ -50,3 +50,7 @@ export async function parseUpload(request: Request) {
     await reader.cancel().catch(() => {});
   }
 }
+
+export function requireConsent(cache: "hit" | "partial" | "miss", consent: boolean) {
+  if (cache !== "hit" && !consent) throw new HttpError(422, "This PDF needs live OCR. Confirm external OCR consent and try again.");
+}
