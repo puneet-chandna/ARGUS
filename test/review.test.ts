@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { canonical, decide, type PageRead } from "../lib/ingestion/index.ts";
 import { applyRating, clarifyBatch, type Report } from "../lib/report.ts";
-import { confirmationError, conflictFields, reviewFields } from "../lib/review-fields.ts";
+import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "../lib/review-fields.ts";
 
 function clarify(report: Report, input: {field: string; value: string; page: number}, pages: number) {
   return clarifyBatch(report, [input], pages);
@@ -60,16 +60,16 @@ test("missing OCR can be reviewed from the Tata schedule without inventing a rat
     { field: "policy_type", value: "Auto Secure - Liability Only Policy", page: 1 },
     { field: "insurer", value: "Tata AIG General Insurance Company Limited", page: 1 },
   ], 12);
-  assert.equal(reviewed.status, "unsupported");
-  assert.equal(reviewed.review_fields, undefined);
+  assert.equal(reviewed.status, "ambiguous");
+  assert.deepEqual(reviewed.review_fields, ["vehicle_class"]);
   assert.equal(reviewed.od.applicable, false);
   assert.equal(reviewed.tp.rate, null);
-  assert.match(reviewed.tp.reason, /which payout cluster covers the policy’s RTO/);
+  assert.match(reviewed.tp.reason, /private car/);
   assert.equal(reviewed.fields.rto.value, null);
 
 });
 
-test("a body style alone can be reviewed before showing the conditional Tata rate", () => {
+test("Tata asks for vehicle classification and leaves unrelated OCR disputes out of the decision", () => {
   const filename = "tata.pdf";
   const facts = {
     insurer: "Tata AIG", previous_insurer: "Tata AIG", policy_type: "Liability Only Policy",
@@ -77,18 +77,22 @@ test("a body style alone can be reviewed before showing the conditional Tata rat
   };
   const report = applyRating({
     filename, checksum: "d".repeat(64), extraction_version: "test", reader_failures: {}, clarifications: [],
-    fields: { ...decide(filename, []), ...Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+    fields: { ...decide(filename, []), end_date: { status: "needs_review", value: null,
+      reason: "conflicting_readings", evidence: [{ file: filename, page: 1, reader: "sarvam", model: "test",
+        raw: "2027-03-31", quote: "Valid until 31/03/2027", box: null }] },
+      ...Object.fromEntries(Object.entries(facts).map(([field, value]) =>
       [field, { value, status: "accepted", reason: "independent_agreement", evidence: [] }])) },
   });
   assert.equal(report.status, "ambiguous");
   assert.deepEqual(report.review_fields, ["vehicle_class"]);
+  assert.deepEqual(requiredReviewFields(report), ["vehicle_class"]);
   assert.equal(report.fields.vehicle_class.reason, "vehicle_body_style_only");
   assert.match(confirmationError("vehicle_class", "HATCH BACK") ?? "", /vehicle class/);
   const reviewed = clarify(report, { field: "vehicle_class", value: "Private car", page: 4 }, 12);
-  assert.equal(reviewed.status, "unsupported");
-  assert.equal(reviewed.tp.rate, null);
-  const conditional = reviewed.trace.find(step => step.step.includes("38%"));
-  assert.ok(conditional?.sources.some(source => source.file === filename && source.page === 4));
+  assert.equal(reviewed.status, "resolved");
+  assert.equal(reviewed.tp.rate, "38");
+  assert.deepEqual(requiredReviewFields(reviewed), []);
+  assert.ok(reviewed.trace.some(step => step.sources.some(source => source.file === filename && source.page === 4)));
 });
 
 test("a batch confirms every conflict together and leaves missing fields alone", () => {
@@ -146,6 +150,11 @@ test("independent readers can corroborate a printed policy heading despite missi
   };
   const second: PageRead = { ...first, reader: "gemini-flash", page: 4 };
   assert.equal(decide("policy.pdf", [first, second], false).policy_type.value, title.toLowerCase());
+  const shortened = { ...second, candidates: [{ ...second.candidates[0], value: "Liability Only Policy" }] };
+  assert.equal(decide("policy.pdf", [first, shortened], false).policy_type.value, title.toLowerCase());
+  const different = { ...second, transcript: "Private Car Package Policy",
+    candidates: [{ ...second.candidates[0], value: "Private Car Package Policy", quote: "Private Car Package Policy" }] };
+  assert.equal(decide("policy.pdf", [first, different]).policy_type.reason, "conflicting_readings");
   assert.equal(decide("policy.pdf", [first, { ...second, reader: first.reader }], false).policy_type.value, null);
   assert.equal(decide("policy.pdf", [first, { ...second, transcript: `Previous: ${title}` }], false).policy_type.value, null);
 });

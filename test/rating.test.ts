@@ -119,22 +119,28 @@ test("Reliance requires dated applicability and checks the CC threshold and add-
   assert.equal(rate({ ...lowBase, standalone_zd: "yes" }).od.status, "unsupported");
 });
 
-test("Tata AIG identifies the source mapping gap with candidate row references", () => {
+test("Tata AIG uses the unique policy RTO location and rates only unanimous TP rows", () => {
   const facts = {
     insurer: "Tata AIG", previous_insurer: "Tata AIG General Insurance", policy_type: "Private Car SATP",
     rto: "DL9C", rto_location: "Delhi", fuel: "CNG", make: "Maruti", model: "Zen Estilo",
   };
   const result = rate(facts);
-  assert.equal(result.status, "unsupported");
+  assert.equal(result.status, "resolved");
   assert.equal(result.od.applicable, false);
-  assert.equal(result.tp.rate, null);
+  assert.equal(result.tp.rate, "38");
   assertSource(result, "General Guidelines", "C10");
   assertSource(result, "Pvtcar", "V5");
   assertSource(result, "Pvtcar", "V511, V515, V519, V523, V527, V531, V535");
-  assert.ok(result.trace.some(step => /If .*DELHI.*38%/.test(step.step)));
-  for (const changes of [{ rto_location: "" }, { rto_location: "Bihar" }, { fuel: "" }]) {
-    assert.ok(!rate({ ...facts, ...changes }).trace.some(step => /If the policy’s RTO belongs/.test(step.step)));
+  assert.ok(result.trace.some(step => /policy’s RTO location matches the DELHI/.test(step.step)));
+  for (const location of ["Bihar", "Noida", "Delhi NCR"]) {
+    const unresolved = rate({ ...facts, rto_location: location });
+    assert.equal(unresolved.status, "unsupported");
+    assert.equal(unresolved.tp.rate, null);
   }
+  assert.deepEqual(rate({ ...facts, rto_location: "" }).review_fields, ["rto_location"]);
+  assert.deepEqual(rate({ ...facts, fuel: "" }).review_fields, ["fuel"]);
+  assert.equal(rate({ ...facts, rto_location: "Haryana" }).tp.rate, "0");
+  assert.equal(rate({ ...facts, fuel: "diesel" }).tp.rate, "19");
   assertSource(result, "Pvtcar", "G511:L511");
 });
 
@@ -143,7 +149,7 @@ test("All four fixture traces replay known source-reviewed facts against the ori
     ["pvt-car-comprehensive-hdfc-ergo", "ambiguous", null, null, "rollover"],
     ["pvt-car-comprehensive-reliance", "ambiguous", null, null, "renewal"],
     ["pvt-car-satp-go-digit", "resolved", null, "29.5", "renewal"],
-    ["pvt-car-satp-tata-aig", "unsupported", null, null, "renewal"],
+    ["pvt-car-satp-tata-aig", "resolved", null, "38", "renewal"],
   ] as const;
   for (const [name, status, od, tp, businessType] of expected) {
     const fixture = JSON.parse(readFileSync(new URL(`../submission/${name}.json`, import.meta.url), "utf8"));
@@ -158,7 +164,9 @@ test("All four fixture traces replay known source-reviewed facts against the ori
     for (const [key, value] of Object.entries(result)) {
       if (key !== "trace") assert.deepEqual(fixture[key], value, `${name}: ${key}`);
     }
-    assert.deepEqual(fixture.trace.slice(-result.trace.length), result.trace, name);
+    assert.deepEqual(fixture.trace.slice(-result.trace.length).map((step: (typeof result.trace)[number]) => ({
+      ...step, sources: step.sources.filter(source => source.file !== fixture.filename),
+    })), result.trace, name);
     if (name === "pvt-car-satp-tata-aig") {
       const report = applyRating({
         ...fixture, clarifications: [],
@@ -166,9 +174,9 @@ test("All four fixture traces replay known source-reviewed facts against the ori
           key, { ...(field as object), status: Object.hasOwn(facts, key) ? "accepted" : "needs_review" },
         ])),
       });
-      const conditional = report.trace.slice(report.rating_trace_start).find(step => step.step.includes("38%"));
-      assert.ok(conditional);
-      assert.deepEqual([...new Set(conditional.sources.flatMap(source => source.page ? [source.page] : []))].sort(), [1, 11, 4].sort());
+      const citedRate = report.trace.at(-1)!;
+      assert.match(citedRate.step, /38% base TP/);
+      assert.deepEqual([...new Set(citedRate.sources.flatMap(source => source.page ? [source.page] : []))].sort(), [1, 11, 4].sort());
     }
   }
 });

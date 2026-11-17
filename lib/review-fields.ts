@@ -11,7 +11,7 @@ const MANUAL_FIELDS: readonly Field[] = [
 const CHECKS = new Set([...CLARIFIABLE, "invalid_coverage_period", "premium_totals_disagree"]);
 
 type ReviewFact = { status: string; reason: string; value: string | number | null; evidence: { page?: number }[] };
-type ReviewableReport = { status: string; fields: Record<string, ReviewFact>; review_fields?: readonly string[] };
+type ReviewableReport = { status: string; fields: Record<string, ReviewFact>; review_fields?: readonly string[]; rule_version?: string };
 
 export function conflictFields(report: { fields: Record<string, ReviewFact> }) {
   return FIELDS.filter(field => {
@@ -45,6 +45,10 @@ export function reviewFields(report: ReviewableReport) {
 }
 
 export function requiredReviewFields(report: ReviewableReport) {
+  if (report.status !== "ambiguous") return [];
   const allowed = new Set<string>(reviewFields(report));
+  if (report.rule_version?.endsWith("-tata-rto-v2")) {
+    return (report.review_fields ?? []).filter(field => allowed.has(field));
+  }
   return [...new Set([...conflictFields(report), ...(report.review_fields ?? [])])].filter(field => allowed.has(field));
 }

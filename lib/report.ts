@@ -2,7 +2,7 @@ import { canonical, type Extraction, type Confirmation, type Evidence } from "./
 import { rate, type RatingResult } from "./rating/index.ts";
 import { vehicleBodyStyle } from "./rating/types.ts";
 import { HttpError } from "./http.ts";
-import { confirmationError, conflictFields, reviewFields } from "./review-fields.ts";
+import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "./review-fields.ts";
 
 export type Report = Extraction & RatingResult & { rating_trace_start?: number };
 
@@ -78,7 +78,8 @@ export function clarifyBatch(report: Report, inputs: unknown, pages: number): Re
     fields[field] = { ...decision, value: normalized, status: "confirmed_by_reviewer", confirmation };
     clarifications.push(confirmation);
   }
-  if (conflictFields(report).some(field => !selected.has(field))) {
+  const required = new Set(requiredReviewFields(report));
+  if (conflictFields(report).some(field => required.has(field) && !selected.has(field))) {
     throw new HttpError(422, "Confirm every OCR conflict before recalculating.");
   }
   return applyRating({ ...report, fields, clarifications });

@@ -1,4 +1,4 @@
-import { policyCoverage } from "../rating/types.ts";
+import { policyCoverage, vehicleBodyStyle } from "../rating/types.ts";
 
 export const FIELDS = [
   "insurer", "previous_insurer", "business_type", "make", "model", "fuel", "rto", "engine_cc",
@@ -121,6 +121,7 @@ const LABELS: Partial<Record<Field, RegExp>> = {
   engine_cc: /\b(cc|cubic capacity|engine capacity|displacement)\b/,
   fuel: /\bfuel\b/,
   rto: /\b(rto|registration|registering authority)\b/,
+  rto_location: /\b(?:rto|registering authority|registration office)\b/,
   manufacture_year: /\b(manufacture|manufacturing|mfg)\b/,
   registration_year: /\b(registration|registered)\b/,
   eligible_private_car_gwp: /(?=.*\beligible\b)(?=.*\bprivate[- ]+car\b)(?=.*\bgwp\b)/,
@@ -151,6 +152,7 @@ function groundedOnPage(candidate: Candidate, lines: string[]) {
   const context = comparable(quote);
   const found = lines.filter(line => line.includes(` ${context} `));
   if (!context || !found.length) return false;
+  if (field === "vehicle_class" && (policyCoverage(value) || vehicleBodyStyle(value))) return false;
   const previousInsurerLine = (field === "previous_insurer" || field === "insurer") &&
     lines.some((line, index) => /^ name of (?:the )?insurer\b/.test(line) && line.includes(` ${context} `) &&
       /^ previous (?:insurance|policy) (?:details|information)(?: :)? $/.test(lines[index - 1] ?? ""));
@@ -238,6 +240,15 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
     }
     const citations = [...(evidence.size ? evidence : rejected).values()]
       .sort((a, b) => a.page - b.page || a.reader.localeCompare(b.reader) || a.raw.localeCompare(b.raw));
+    if (field === "policy_type" && observed.size > 1) {
+      const title = [...observed.keys()].reduce((longest, value) => value.length > longest.length ? value : longest);
+      const full = observed.get(title)!;
+      for (const [value, pages] of observed) {
+        if (value === title || policyCoverage(value) !== policyCoverage(title) || !contains(title, value)) continue;
+        for (const [page, readers] of pages) full.set(page, new Set([...(full.get(page) ?? []), ...readers]));
+        observed.delete(value);
+      }
+    }
     // Matching document headings can be cited on different pages.
     const corroboratedHeading = observed.size === 1 && headingReaders.size >= 2;
     const match = corroboratedHeading ? [...observed.keys()][0] : [...observed].find(([, pages]) => {

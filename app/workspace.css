@@ -281,7 +281,6 @@ dialog.review-desk[open] { display: flex; flex-direction: column; }
 }
 @keyframes review-step-in { from { opacity: .65; transform: translateY(4px); } }
 @keyframes review-spin { to { transform: rotate(360deg); } }
-.run-fact-action { margin-top: 8px; }
 
 
 @media (max-width: 680px) {

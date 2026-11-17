@@ -26,11 +26,12 @@ export const GET = endpoint(async (request, route: Context) => {
       ...run.progress, ...(expired && { stage: "failed" }), status: expired ? "failed" : run.status,
     });
   }
-  const result = run.result;
+  const refreshed = await store.refreshTataDecision(run);
+  const result = refreshed.result;
   if (result?.status === "ambiguous" && !result.review_fields) {
-    return json({ run: present({ ...run, result: { ...result, review_fields: applyRating(result).review_fields } }) });
+    return json({ run: present({ ...refreshed, result: { ...result, review_fields: applyRating(result).review_fields } }) });
   }
-  return json({ run: present(run) });
+  return json({ run: present(refreshed) });
 });
 
 export const POST = endpoint(async (_request, route: Context) => {

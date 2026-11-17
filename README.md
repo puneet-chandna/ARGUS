@@ -23,7 +23,7 @@ These decision traces replay source-reviewed facts through the same rating engin
 | [Go Digit · Stand-alone TP](submission/pvt-car-satp-go-digit.json) | Inapplicable | **29.5%** | RTO cluster and fuel/engine band select the SATP row. |
 | [HDFC ERGO · Comprehensive](submission/pvt-car-comprehensive-hdfc-ergo.json) | Ambiguous | Unsupported | Zone 2 is established. OD needs verified fuel and eligible GWP. |
 | [Reliance · Comprehensive](submission/pvt-car-comprehensive-reliance.json) | Ambiguous | Unsupported | The mapped zone, vehicle segment, and under-1,000 cc footnote are traced. Policy inception predates the grid. |
-| [Tata AIG · Stand-alone TP](submission/pvt-car-satp-tata-aig.json) | Inapplicable | Unsupported | The seven DELHI rows agree on a 38% base rate. The workbook does not establish that the policy’s RTO belongs to that cluster. |
+| [Tata AIG · Stand-alone TP](submission/pvt-car-satp-tata-aig.json) | Inapplicable | **38% base** | The policy’s printed RTO location matches the DELHI column. All seven CNG renewal rows agree. |
 
 ## How it works
 

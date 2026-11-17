@@ -58,6 +58,15 @@ test("RTO location punctuation spacing does not trigger a false OCR conflict", (
   assert.equal(result.evidence.length, 2);
 });
 
+test("RTO location needs a registration authority label and vehicle class excludes policy titles", () => {
+  const valid = (field: Candidate["field"], value: string, quote: string) =>
+    grounded({ field, value, quote, box: null }, quote);
+  assert.ok(valid("rto_location", "Delhi", "RTO Location: Delhi"));
+  assert.ok(!valid("rto_location", "Delhi", "Address for Communication: New Delhi"));
+  assert.ok(!valid("rto_location", "Mumbai", "Place of issue: Mumbai"));
+  assert.ok(!valid("vehicle_class", "Auto Secure - Liability Only Policy", "Auto Secure - Liability Only Policy"));
+});
+
 test("normalizes unambiguous dates and exact amounts conservatively", () => {
   assert.equal(canonical("start_date", "03/04/2026"), null);
   assert.equal(canonical("start_date", "2026-02-31"), null);

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { HttpError } from "./http.ts";
 import { conflictFields, requiredReviewFields } from "./review-fields.ts";
 import type { CacheCheck, RunProgress } from "./progress.ts";
-import type { Report } from "./report.ts";
+import { applyRating, type Report } from "./report.ts";
 import type { Extraction } from "./ingestion/index.ts";
 import { verifiedOcr, verifiedOcrProfile } from "./verified-ocr.ts";
 import { pdfObject, uuid } from "./upload.ts";
@@ -73,6 +73,17 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (error) throw error;
       if (!data) throw new HttpError(404, "Run not found.");
       return data;
+    },
+    async refreshTataDecision(run: StoredRun) {
+      const result = run.result;
+      if (run.deleting_at || run.status !== "complete" ||
+          result?.tp.reason !== "The workbook does not confirm which payout cluster covers the policy’s RTO.") return run;
+      const { data, error } = await client.from(TABLE).update({
+        result: applyRating(result), revision: run.revision + 1,
+      }).match({ ...owned(run.id), status: "complete", revision: run.revision })
+        .is("deleting_at", null).select("*").maybeSingle<StoredRun>();
+      if (error) throw error;
+      return data ?? this.get(run.id);
     },
     async upload(input: { filename: string; bytes: Buffer; digest: string; allowCloud: boolean }, key: string, pages_total: number, cache_result: CacheCheck["cache"]) {
       const entry = {

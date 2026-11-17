@@ -4,7 +4,7 @@ import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import { commissionLabel, type Preferences } from "../lib/profile-settings";
 import { ExportButton } from "./profile-export-button";
 import { readerNotice } from "./ocr";
-import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "../lib/review-fields";
+import { confirmationError, conflictFields, requiredReviewFields } from "../lib/review-fields";
 import type { RunProgress } from "../lib/progress";
 import "./workspace.css";
 
@@ -519,13 +519,11 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
   const seconds = Math.round((run.duration_ms ?? 0) / 1000);
   const notice = readerNotice(report?.reader_failures);
   const facts = Object.entries(report?.fields ?? {});
-  const confirmed = facts.filter(([, fact]) => fact.value != null);
+  const confirmed = facts.filter(([, fact]) => fact.value != null &&
+    (fact.status === "accepted" || fact.status === "confirmed_by_reviewer"));
 
-  const reviewable = report && !run.deleting_at && pdf ? reviewFields(report) : [];
-  const conflicts = report && !run.deleting_at && pdf ? conflictFields(report) : [];
   const required = report && !run.deleting_at && pdf ? requiredReviewFields(report) : [];
-  const extraEvidence = facts.filter(([field, fact]) => fact.value == null && fact.evidence.length > 0 && !required.includes(field));
-  const optional = reviewable.filter(field => !required.includes(field));
+  const conflicts = report ? conflictFields(report).filter(field => required.includes(field)) : [];
   const traceStart = report?.rating_trace_start ?? 0;
   const decisions = report?.trace.slice(traceStart) ?? [];
   const policyTrace = report?.trace.slice(0, traceStart) ?? [];
@@ -670,13 +668,6 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
             {confirmed.length > 0
               ? <Facts entries={confirmed} pdf={pdf} filename={run.filename} />
               : <p className="run-empty">No policy facts could be verified for this run.</p>}
-            {extraEvidence.length > 0 && <details className="run-unverified">
-              <summary>Other unverified readings <span aria-hidden="true">({extraEvidence.length})</span></summary>
-              <p>Argus excluded these readings from the rate lookup. Any fields you need to review are listed above.</p>
-              <Facts entries={extraEvidence} pdf={pdf} filename={run.filename} />
-            </details>}
-            {report.status === "ambiguous" && optional.length > 0 && <button type="button" className="button secondary run-fact-action"
-              onClick={() => setReviewQueue([...optional, ...required])}>Add another policy detail</button>}
           </>)}
         </div>)}
       </div>

@@ -65,7 +65,8 @@ export function rate(facts: Facts): RatingResult {
   const states = [parts.od.status, parts.tp.status];
   const status = states.includes("ambiguous") ? "ambiguous" : states.includes("unsupported") ? "unsupported" : "resolved";
   return {
-    ...parts, status, rule_version: data.version, business_type: businessType || null,
+    ...parts, status, rule_version: insurer === "tata-aig" ? `${data.version}-tata-rto-v2` : data.version,
+    business_type: businessType || null,
     confidence: status === "ambiguous" ? { level: "low", reason: "At least one applicable rate is undetermined." } :
       { level: "high", reason: "The supplied source evidence establishes the rate or coverage decision." },
   };

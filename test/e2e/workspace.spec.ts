@@ -58,7 +58,7 @@ async function uploadPdf(page: Page, name: string, buffer: Buffer) {
   await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible({ timeout: 15_000 });
 }
 
-test("an uploaded policy keeps its conditional rate, exact citations and private PDF after reauthentication", async ({ page, reviewer }) => {
+test("the Tata commission card shows 38% and reopens the cited result and private PDF", async ({ page, reviewer }) => {
   const name = "pvt-car-satp-tata-aig.pdf";
   const pdf = await readFile(new URL(`../../vaatun-starter-bundle/sample-policies/${name}`, import.meta.url));
   const fixture = JSON.parse(await readFile(new URL("../../submission/pvt-car-satp-tata-aig.json", import.meta.url), "utf8"));
@@ -73,6 +73,10 @@ test("an uploaded policy keeps its conditional rate, exact citations and private
           value: "hatch back", status: "accepted", reason: "independent_agreement",
           evidence: [{ file: name, page: 4, raw: "Hatch Back" }],
         },
+        end_date: {
+          value: null, status: "needs_review", reason: "conflicting_readings",
+          evidence: [{ file: name, page: 11, reader: "sarvam", raw: "30/08/2024", quote: "Date of Expiry: 30/08/2024" }],
+        },
       },
     },
   });
@@ -83,6 +87,7 @@ test("an uploaded policy keeps its conditional rate, exact citations and private
   await uploadPdf(page, name, pdf);
   const commission = page.getByRole("region", { name: "Broker commission" });
   await expect(commission).toContainText("Confirm whether the policy is for a private car");
+  await expect(page.getByRole("heading", { name: "One policy detail to review" })).toBeVisible();
   await page.getByRole("button", { name: "Vehicle class", exact: true }).click();
   const review = page.getByRole("dialog");
   await review.getByRole("textbox", { name: "Value from the policy" }).fill("Private car");
@@ -90,12 +95,15 @@ test("an uploaded policy keeps its conditional rate, exact citations and private
   await review.getByRole("button", { name: "Recalculate commission" }).click();
   await expect(page.getByText("Review saved. Commission recalculated.")).toBeVisible();
   await expect(commission).toContainText("Inapplicable");
-  await expect(commission).toContainText("Unsupported");
-  await expect(commission).toContainText("does not confirm which payout cluster");
-  await expect(commission).not.toContainText("38%");
+  await expect(commission).toContainText("38.0%");
+  await expect(commission).toContainText("DELHI standard-grid base on net premium");
+  await expect(commission).toContainText("Pvtcar!V511, V515, V519, V523, V527, V531, V535");
+  await expect(page.getByRole("heading", { name: /policy detail.*to review/ })).toHaveCount(0);
+  await page.getByRole("tab", { name: /Policy facts/ }).click();
+  await expect(page.getByRole("tabpanel", { name: /Policy facts/ }).getByText("Other unverified readings")).toHaveCount(0);
   await page.getByRole("button", { name: "View decision evidence" }).click();
   const trace = page.getByRole("tabpanel", { name: "Decision trace" });
-  await expect(trace.getByText(/if .*DELHI payout cluster.*38%/i)).toBeInViewport();
+  await expect(trace.getByText(/policy’s RTO location matches the DELHI/)).toBeVisible();
   await expect(trace.getByText("Pvtcar!V511, V515, V519, V523, V527, V531, V535")).toBeVisible();
   await expect(trace.getByText("General Guidelines!C10").first()).toBeVisible();
   await expect(trace.getByRole("link", { name: /page 4, in a new tab/ }).first()).toHaveAttribute("href", /\/pdf#page=4$/);
@@ -108,7 +116,7 @@ test("an uploaded policy keeps its conditional rate, exact citations and private
   await signIn(page, reviewer);
   await page.locator(".history-item").filter({ hasText: name }).click();
   await page.reload();
-  await expect(commission).toContainText("Unsupported");
+  await expect(commission).toContainText("38.0%");
   await page.getByRole("button", { name: "Export run", exact: true }).click();
   await expect(page.getByRole("link", { name: "Download JSON" })).toBeVisible();
   const activity = await page.request.get("/api/profile?view=activity").then(response => response.json());
@@ -116,6 +124,22 @@ test("an uploaded policy keeps its conditional rate, exact citations and private
   const original = await page.request.get(pdfUrl!);
   expect(original.status()).toBe(200);
   expect(checksum(await original.body())).toBe(checksum(pdf));
+
+  // Opening a previously saved decision recalculates the rate from its verified facts.
+  const saved = await page.request.get(pdfUrl!.replace(/\/pdf$/, "")).then(response => response.json());
+  const legacy = { ...saved.run.result, status: "unsupported", tp: {
+    status: "unsupported", rate: null, applicable: true,
+    reason: "The workbook does not confirm which payout cluster covers the policy’s RTO.",
+  } };
+  const update = await reviewer.db.from("argus_runs").update({ result: legacy }).eq("id", saved.run.id);
+  expect(update.error).toBeNull();
+  await page.reload();
+  await expect(commission).toContainText("38.0%");
+  const stored = await reviewer.db.from("argus_runs").select("result,revision").eq("id", saved.run.id).single();
+  expect(stored.error).toBeNull();
+  expect(stored.data?.result.tp.rate).toBe("38");
+  expect(stored.data?.result.fields).toEqual(saved.run.result.fields);
+  expect(stored.data?.revision).toBe(saved.run.revision + 1);
 });
 
 test("the reviewer resolves an unseen policy conflict from the PDF and keeps the cited choice", async ({ page, reviewer }) => {
