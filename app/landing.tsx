@@ -90,6 +90,7 @@ type AuthEntryProps = {
   email: string;
   busy: boolean;
   error: string;
+  notice?: string;
   headingRef: Ref<HTMLHeadingElement>;
   onEmail: (email: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -97,7 +98,7 @@ type AuthEntryProps = {
 };
 
 export function AuthEntry({
-  creatingAccount, confirmationEmail, email, busy, error, headingRef, onEmail, onSubmit, onSwitch,
+  creatingAccount, confirmationEmail, email, busy, error, notice, headingRef, onEmail, onSubmit, onSwitch,
 }: AuthEntryProps) {
   const [showPassword, setShowPassword] = useState(false);
   const action = creatingAccount ? "Create account" : "Sign in";
@@ -120,6 +121,7 @@ export function AuthEntry({
             ? <>Check <strong>{confirmationEmail}</strong> for a confirmation link to finish setting up your account.</>
             : creatingAccount ? "Create an account to upload policies and save your reviews." : "Open your policy reviews and saved source files."}</p>
         </header>
+        {notice && <p className="entry-account-notice" role="status">{notice}</p>}
         {confirmationEmail ? <button className="button primary entry-action" type="button" onClick={switchMode}>Back to sign-in <Arrow /></button> :
           <>
             <form className="entry-auth-form" method="post" onSubmit={onSubmit} aria-busy={busy}>

@@ -8,7 +8,7 @@ export const POST = endpoint(async (request) => {
       password.length < 8 || password.length > 72) {
     throw new HttpError(400, "Enter your email and a password between 8 and 72 characters.");
   }
-  const auth = await authClient();
+  const auth = await authClient(request.headers.get("user-agent"));
   const origin = configuredOrigin() || new URL(request.url).origin;
   const { data, error } = await auth.auth.signUp({
     email: address, password, options: { emailRedirectTo: new URL("/auth/confirm", origin).href },

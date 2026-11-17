@@ -1,9 +1,10 @@
+import { sessionSettings } from "../../../lib/profile.ts";
 import { authClient, reviewer } from "../../../lib/supabase.ts";
 import { endpoint, HttpError, json, readJson } from "../../../lib/http.ts";
 
 export const GET = endpoint(async () => {
-  const { user } = await reviewer();
-  return json({ email: user.email });
+  const { auth, user } = await reviewer();
+  return json(await sessionSettings(auth, user));
 });
 
 export const POST = endpoint(async (request) => {
@@ -12,13 +13,13 @@ export const POST = endpoint(async (request) => {
       typeof password !== "string" || password.length > 1024 || !password) {
     throw new HttpError(400, "Enter your reviewer email and password.");
   }
-  const auth = await authClient();
+  const auth = await authClient(request.headers.get("user-agent"));
   const { data, error } = await auth.auth.signInWithPassword({ email, password });
   if (error || !data.user) {
     if (error?.status === 429) throw new HttpError(429, "Too many sign-in attempts. Try again later.");
     throw new HttpError(401, "Could not sign in with those credentials.");
   }
-  return json({ email: data.user.email });
+  return json(await sessionSettings(auth, data.user));
 });
 
 export const DELETE = endpoint(async () => {

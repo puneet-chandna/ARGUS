@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   try {
-    const auth = await authClient();
+    const auth = await authClient(request.headers.get("user-agent"));
     const result = code ? await auth.auth.exchangeCodeForSession(code, {
       flowId: url.searchParams.get("sb_flow_id") ?? undefined,
     }) : tokenHash ? await auth.auth.verifyOtp({ token_hash: tokenHash, type: "email" }) : null;

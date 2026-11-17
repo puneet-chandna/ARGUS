@@ -3,6 +3,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import processingMonogram from "./argus-processing.svg";
 import stillMonogram from "./icon.svg";
+import { commissionLabel, type Preferences } from "../lib/profile-settings";
+import { ExportButton } from "./profile-export-button";
 import { readerNotice } from "./ocr";
 import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "../lib/review-fields";
 import "./workspace.css";
@@ -56,6 +58,8 @@ export type Run = {
   created_at: string;
   revision: number;
   lease_until?: string | null;
+  pdf_deleted_at?: string | null;
+  pdf_cleanup_pending?: boolean;
   ocr_progress?: { completed: number; total: number } | null;
 };
 
@@ -67,6 +71,7 @@ const labels = {
   queued: "Queued",
   processing: "Analyzing",
   complete: "Completed",
+  success: "Success",
   failed: "Interrupted",
   resolved: "Resolved",
   ambiguous: "Needs review",
@@ -75,6 +80,7 @@ const labels = {
 
 const statusIcons = {
   resolved: "m3 8 3 3 7-7",
+  success: "m3 8 3 3 7-7",
   ambiguous: "M8 4v4m0 3v.5",
   unsupported: "m5 5 6 6m0-6-6 6",
   failed: "M8 4v4m0 3v.5",
@@ -91,7 +97,6 @@ export function RunStatus({ status }: { status: keyof typeof labels }) {
   </span>;
 }
 
-export const runRateLabel = (rate: number | string) => `${rate}%`;
 
 const fieldLabels: Record<string, string> = {
   engine_cc: "Engine capacity",
@@ -137,6 +142,7 @@ function Citation({ source, pdf, showFile = true }: { source: Source; pdf: strin
       {showFile && <span>{source.file}</span>}
     </span>;
   }
+  if (source.page && !pdf) return <span>Policy page {source.page}</span>;
   if (source.page) return <a className="run-policy-link" href={`${pdf}#page=${source.page}`} target="_blank" rel="noreferrer"
     aria-label={`Open ${source.file}, page ${source.page}, in a new tab`}>Policy page {source.page}</a>;
   return <span>{source.file}</span>;
@@ -457,10 +463,10 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
   </dialog>;
 }
 
-function Commission({ label, abbreviation, part, sharedReason }: {
-  label: string; abbreviation: string; part: Rate; sharedReason: boolean;
+function Commission({ label, abbreviation, part, sharedReason, preferences }: {
+  label: string; abbreviation: string; part: Rate; sharedReason: boolean; preferences?: Preferences;
 }) {
-  const rate = part.rate != null ? runRateLabel(part.rate) : part.applicable === false
+  const rate = part.rate != null ? commissionLabel(part.rate, preferences) : part.applicable === false
     ? "Inapplicable" : part.status === "unsupported" ? "Unsupported" : "Undetermined";
   return <div className="run-coverage" data-status={part.status}>
     <dt><span className="run-coverage-code">{abbreviation}</span>{label}</dt>
@@ -540,17 +546,18 @@ function AnalysisProgress({ progress }: { progress: Run["ocr_progress"] }) {
   </section>;
 }
 
-export function RunResult({ run, working, processing, onProcess, onConfirm }: {
+export function RunResult({ run, working, processing, onProcess, onConfirm, preferences }: {
   run: Run;
   working: boolean;
   processing: boolean;
+  preferences?: Preferences;
   onProcess: () => Promise<void>;
   onConfirm: (value: ReviewSubmission) => Promise<void>;
 }) {
   const baseId = useId();
   const [panel, setPanel] = useState<Panel>("trace");
   const tabButtons = useRef<Partial<Record<Panel, HTMLButtonElement>>>({});
-  const pdf = `/api/runs/${run.id}/pdf`;
+  const pdf = run.pdf_deleted_at || run.pdf_cleanup_pending ? "" : `/api/runs/${run.id}/pdf`;
   const report = run.result;
   const pending = run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now();
   const analyzing = processing || pending;
@@ -559,9 +566,9 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
   const facts = Object.entries(report?.fields ?? {});
   const confirmed = facts.filter(([, fact]) => fact.value != null);
 
-  const reviewable = report && !run.deleting_at ? reviewFields(report) : [];
-  const conflicts = report && !run.deleting_at ? conflictFields(report) : [];
-  const required = report && !run.deleting_at ? requiredReviewFields(report) : [];
+  const reviewable = report && !run.deleting_at && pdf ? reviewFields(report) : [];
+  const conflicts = report && !run.deleting_at && pdf ? conflictFields(report) : [];
+  const required = report && !run.deleting_at && pdf ? requiredReviewFields(report) : [];
   const extraEvidence = facts.filter(([field, fact]) => fact.value == null && fact.evidence.length > 0 && !required.includes(field));
   const optional = reviewable.filter(field => !required.includes(field));
   const traceStart = report?.rating_trace_start ?? 0;
@@ -610,16 +617,20 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
         {run.display_name && <p className="run-original-name">{run.filename}</p>}
         <p className="run-state" role="status"><RunStatus status={run.deleting_at ? "deleting" : status} /></p>
       </div>
-      {!run.deleting_at && <a className="button secondary run-open-original" href={pdf} target="_blank" rel="noreferrer" aria-label="Open original PDF in a new tab">
+      {!run.deleting_at && pdf && <a className="button secondary run-open-original" href={pdf} target="_blank" rel="noreferrer" aria-label="Open original PDF in a new tab">
         Open original PDF
       </a>}
+      {report && !run.deleting_at && <ExportButton type="run" runId={run.id} />}
     </header>
+    {(run.pdf_deleted_at || run.pdf_cleanup_pending) && <p className="notice">
+      {run.pdf_deleted_at ? "The original PDF was deleted after analysis." : "The original PDF is pending deletion."} Policy facts and rate evidence are still available.
+    </p>}
     {report ? <>
       <section aria-labelledby="commission-title" className="run-outcome">
         <h2 id="commission-title">Broker commission</h2>
         <dl className="run-coverage-grid">
-          <Commission label="Own damage" abbreviation="OD" part={report.od} sharedReason={sharedReason} />
-          <Commission label="Third party" abbreviation="TP" part={report.tp} sharedReason={sharedReason} />
+          <Commission label="Own damage" abbreviation="OD" part={report.od} sharedReason={sharedReason} preferences={preferences} />
+          <Commission label="Third party" abbreviation="TP" part={report.tp} sharedReason={sharedReason} preferences={preferences} />
         </dl>
         {sharedReason && <p className="run-shared-reason">{report.od.reason}</p>}
         <div className="run-confidence">
@@ -659,7 +670,7 @@ export function RunResult({ run, working, processing, onProcess, onConfirm }: {
         <summary>OCR details</summary>
         <p>{notice}</p>
       </details>}
-      {reviewQueue.length > 0 && <ReviewDesk key={run.revision} fields={reviewQueue} required={required} conflicts={conflicts} drafts={drafts}
+      {pdf && reviewQueue.length > 0 && <ReviewDesk key={run.revision} fields={reviewQueue} required={required} conflicts={conflicts} drafts={drafts}
         report={report} run={run} pdf={pdf} working={working} onDraft={answer => setDrafts(current => ({ ...current, [answer.field]: answer }))}
         onClose={() => setReviewQueue([])} onConfirm={async value => {
           await onConfirm(value);

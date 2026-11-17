@@ -36,7 +36,7 @@ const test = base.extend<{ reviewer: Reviewer }>({
       const cache = await db.from("argus_ocr_cache").delete().eq("owner_id", id);
       if (cache.error) throw cache.error;
       const account = await db.auth.admin.deleteUser(id);
-      if (account.error) throw account.error;
+      if (account.error && account.error.code !== "user_not_found") throw account.error;
     }
   },
 });
@@ -52,7 +52,7 @@ async function uploadPdf(page: Page, name: string, buffer: Buffer) {
   await page.locator('input[type="file"]').setInputFiles({ name, mimeType: "application/pdf", buffer });
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Analyze policy" }).click();
-  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible({ timeout: 15_000 });
 }
 
@@ -104,9 +104,13 @@ test("an uploaded policy keeps its conditional rate, exact citations and private
   await expect(page.getByRole("heading", { name: "Sign in to Argus" })).toBeVisible();
   expect((await page.request.get(pdfUrl!)).status()).toBe(401);
   await signIn(page, reviewer);
-  await page.getByRole("button", { name: new RegExp(`^${name} Unsupported`) }).click();
+  await page.locator(".history-item").filter({ hasText: name }).click();
   await page.reload();
   await expect(commission).toContainText("Unsupported");
+  await page.getByRole("button", { name: "Export run", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Download JSON" })).toBeVisible();
+  const activity = await page.request.get("/api/profile?view=activity").then(response => response.json());
+  expect(activity.activity.events.map((event: { action: string }) => event.action)).toEqual(expect.arrayContaining(["analyzed", "exported"]));
   const original = await page.request.get(pdfUrl!);
   expect(original.status()).toBe(200);
   expect(checksum(await original.body())).toBe(checksum(pdf));
@@ -162,4 +166,115 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   const facts = page.getByRole("tabpanel", { name: /Policy facts/ });
   await expect(facts.getByText("998", { exact: true })).toBeVisible();
   await expect(facts.getByText("Reviewer confirmed on Policy page 1", { exact: true })).toBeVisible();
+});
+
+test("profile saves real settings and protects profile data, runs and audit history", async ({ page, reviewer, browser }) => {
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  const pill = page.getByRole("link", { name: "Open profile" });
+  await pill.click();
+  await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
+  await expect(pill).toHaveAttribute("aria-current", "location");
+  const name = page.getByRole("textbox", { name: "Display name" });
+  const save = page.getByRole("button", { name: "Save changes" });
+  await expect(save).toBeDisabled();
+  await name.fill("Argus Reviewer");
+  await page.getByRole("textbox", { name: "Organization" }).fill("Example Brokerage");
+  await page.getByRole("combobox", { name: "Time zone" }).fill("Asia/Kolkata");
+  await save.click();
+  await expect(page.getByRole("status").getByText("Personal details saved.")).toBeVisible();
+  await page.reload();
+  await expect(name).toHaveValue("Argus Reviewer");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const content = await page.locator(".profile-content").boundingBox();
+  const mobileNav = await page.getByRole("navigation", { name: "Settings" }).boundingBox();
+  expect(content?.width).toBeGreaterThanOrEqual(350);
+  expect(mobileNav!.y + mobileNav!.height).toBeLessThan(content!.y);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await name.fill("Unsaved edit");
+  const warning = page.waitForEvent("dialog").then(async dialog => {
+    expect(dialog.type()).toBe("beforeunload");
+    await dialog.dismiss();
+  });
+  await page.getByRole("link", { name: "Preferences", exact: true }).click();
+  await warning;
+  await expect(name).toHaveValue("Unsaved edit");
+  await name.fill("Argus Reviewer");
+
+  const origin = new URL(page.url()).origin;
+  const key = process.env.ARGUS_TEST_SUPABASE_PUBLISHABLE_KEY;
+  const url = process.env.ARGUS_TEST_SUPABASE_URL!;
+  const outsiderEmail = `other-${randomUUID()}@example.test`;
+  const password = randomUUID();
+  const outsider = await reviewer.db.auth.admin.createUser({ email: outsiderEmail, password, email_confirm: true });
+  expect(outsider.error).toBeNull();
+  const secondary = await browser.newContext({ baseURL: origin });
+  try {
+    // Submit a policy but do not start external OCR. Approval and analysis are independent actions.
+    const upload = await page.request.post("/api/runs", { headers: { Origin: origin }, multipart: {
+      allowCloud: "true", pdf: { name: "approved-test.pdf", mimeType: "application/pdf", buffer: syntheticPdf("Synthetic policy") },
+    } });
+    expect(upload.status()).toBe(201);
+    const { run } = await upload.json();
+    await page.goto(`/workspace#${run.id}`);
+    await expect(page.getByRole("heading", { name: "approved-test.pdf", exact: true })).toBeVisible();
+    await pill.click();
+    await expect(page.getByRole("link", { name: "Back to workspace" })).toHaveAttribute("href", `/workspace#${run.id}`);
+    const second = await secondary.newPage();
+    await second.goto("/sign-in");
+    await signIn(second, { email: outsiderEmail, password, id: outsider.data.user!.id, db: reviewer.db });
+    expect((await second.request.get(`/api/runs/${run.id}`)).status()).toBe(404);
+    expect((await second.request.get(`/api/profile?owner_id=${reviewer.id}`).then(response => response.json())).personal.display_name).toBe("");
+    const secondActivity = await second.request.get(`/api/profile?view=activity&owner_id=${reviewer.id}`).then(response => response.json());
+    expect(secondActivity.activity.events.map((e: { action: string }) => e.action)).toEqual(["signed_in"]);
+    if (key) {
+      const userClient = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      expect((await userClient.auth.signInWithPassword({ email: outsiderEmail, password })).error).toBeNull();
+      expect((await userClient.from("argus_profiles").select("*").eq("owner_id", reviewer.id)).data).toEqual([]);
+      expect((await userClient.from("argus_audit_events").select("*").eq("owner_id", reviewer.id)).data).toEqual([]);
+      expect((await userClient.from("argus_runs").select("*").eq("id", run.id)).data).toEqual([]);
+      expect((await userClient.from("argus_profiles").update({ display_name: "Changed" }).eq("owner_id", reviewer.id)).error).not.toBeNull();
+    }
+    await page.getByRole("link", { name: "Preferences", exact: true }).click();
+    await page.getByRole("combobox", { name: "Density", exact: true }).selectOption("compact");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.locator(".app-frame")).toHaveAttribute("data-density", "compact");
+    await page.getByRole("link", { name: "Security", exact: true }).click();
+    await expect(page.getByText("This device", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Change password" })).toBeVisible();
+    await page.getByRole("link", { name: "Activity", exact: true }).click();
+    await expect(page.getByRole("table", { name: "Audit log" }).getByText("Approved external OCR")).toBeVisible();
+    await expect(page.getByRole("table", { name: "Audit log" }).getByRole("cell", { name: "Signed in", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Export CSV" }).click();
+    await expect(page.getByRole("link", { name: "Download CSV" })).toBeVisible();
+    await page.getByRole("link", { name: "Data & privacy", exact: true }).click();
+    await page.getByRole("button", { name: "Prepare ZIP" }).click();
+    await expect(page.getByRole("link", { name: "Download ZIP" })).toBeVisible();
+    await page.getByRole("button", { name: "Delete all saved runs" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await expect(dialog.getByRole("button", { name: "Delete all saved runs" })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "Delete all saved runs" }).click();
+    await dialog.getByRole("textbox", { name: "Type DELETE to confirm" }).fill("DELETE");
+    await dialog.getByRole("button", { name: "Delete all saved runs" }).click();
+    await expect(page.getByText("Saved runs deleted.", { exact: true })).toBeVisible();
+    expect((await page.request.get(`/api/runs/${run.id}`)).status()).toBe(404);
+    const updated = randomUUID();
+    const changePassword = (current: string) => page.request.patch("/api/profile", {
+      headers: { Origin: origin }, data: { part: "password", current, password: updated, confirm: updated },
+    });
+    expect((await changePassword("incorrect")).status()).toBe(422);
+    expect((await changePassword(reviewer.password)).status()).toBe(200);
+    await page.getByRole("button", { name: "Delete account", exact: true }).click();
+    await dialog.getByRole("textbox", { name: "Type DELETE to confirm" }).fill("DELETE");
+    await dialog.getByRole("button", { name: "Permanently delete account" }).click();
+    await expect(page.getByRole("status").getByText("Your Argus account and its data were deleted.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in to Argus" })).toBeVisible();
+  } finally {
+    await secondary.close();
+    const { error } = await reviewer.db.auth.admin.deleteUser(outsider.data.user!.id);
+    expect(error).toBeNull();
+  }
 });

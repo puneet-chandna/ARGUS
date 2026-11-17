@@ -329,3 +329,5 @@ button.entry-text-link {
   .entry-paper-top h2 { max-width: none; }
   .entry-workflow ol { grid-template-columns: 1fr; }
 }
+
+.entry-account-notice { color: var(--success); font-size: .875rem; }

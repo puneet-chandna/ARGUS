@@ -61,3 +61,15 @@ Sarvam runs first when configured and uses the account’s own credits. Argus tr
 Open [Deploy to Render](https://render.com/deploy?repo=https://github.com/puneet-chandna/ARGUS), connect GitHub, and enter `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY`. The [Blueprint](render.yaml) creates a Free Docker web service with `/api/health` and deploys gated on GitHub checks. Render supplies the default HTTPS origin. Set `ARGUS_PUBLIC_ORIGIN` if you use a custom domain. [Render Free limits](https://render.com/docs/free)
 
 **Hosted acceptance check.** Upload an authorized policy outside the four samples. Open its result and original PDF from history after refreshing, reopening the browser, signing out and back in, restarting the app, and redeploying. Compare the PDF SHA-256 before and after.
+
+## Reviewer profile and retention
+
+Apply all Supabase migrations before deploying this version. The profile and preferences belong to the signed-in reviewer. Audit records are created by Auth, database transitions and successful exports; historical activity is not backfilled. An approval records consent, while an analysis records whether a cloud reader was contacted. The session list uses Supabase's device metadata. Session revocation stops refresh; an already issued access token may remain valid until it expires.
+
+The default is to keep runs and original PDFs until deleted. The optional **Delete original PDFs after analysis** preference applies to new successful analyses and keeps the structured result and rate evidence. It prevents reopening or manually reviewing the original. Argus attempts removal immediately and can retry pending removals during maintenance.
+
+To enable timed retention, set `ARGUS_MAINTENANCE_SECRET` to a random secret of at least 32 characters and configure an external scheduler to send `POST /api/maintenance` with `Authorization: Bearer <secret>` at least daily. Store the secret in the scheduler's secret manager. Monitor non-2xx responses and retry them; each call handles up to 100 expired runs and 100 pending PDF removals. Do not configure the secret without an active scheduler. With no scheduler, timed retention controls are unavailable.
+
+Personal exports include account details, the profile photo if set, preferences, analyses and activity in a ZIP of JSON and CSV files. They do not include original PDFs. Account deletion removes the local Auth account and reconciles the private PDF objects before deleting identity data. Action email notifications, geographic session lookup and two-factor enrollment are unavailable in the standard Argus configuration.
+
+When using Supabase Cron, enable `pg_cron` and `pg_net` and provision the job with [the retention setup SQL](supabase/retention-schedule.sql). The database generates the bearer and keeps it in a private schema. Use the actual HTTPS origin of your Argus deployment. Disable the schedule and clear its configuration together to turn off timed retention.

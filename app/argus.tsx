@@ -9,37 +9,18 @@ import type { OcrMode } from "../lib/ocr-status";
 import { ocrDescription } from "./ocr";
 import { RunResult } from "./report";
 import { SavedRun } from "./saved-runs";
+import { Profile, ProfileAvatar } from "./profile";
+import { api, json, message, RequestError } from "./client-api";
+import { runHash as RUN_LINK, workspaceReturn, type ProfileSection, type Session } from "../lib/profile-settings";
 import { AuthEntry, Landing } from "./landing";
 import { RunSettings } from "./run-settings";
 import "./desk.css";
 import type { ReviewSubmission, Run } from "./report";
 
-type Session = { email: string };
+
 type Signup = Session | { confirmationRequired: true };
 
-class RequestError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
-}
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, { cache: "no-store", ...init });
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new RequestError(typeof data?.error === "string" ? data.error : "The request could not be completed.", response.status);
-  }
-  return data as T;
-}
-
-function json(method: string, value: unknown): RequestInit {
-  return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) };
-}
-
-function message(error: unknown): string {
-  return error instanceof RequestError ? error.message : "Could not connect to Argus. Try again.";
-}
-
-type View = "landing" | "signin" | "workspace";
-const RUN_LINK = /^#[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+type View = "landing" | "signin" | "workspace" | "profile";
 
 function showPath(path: string) {
   const hash = RUN_LINK.test(window.location.hash) ? window.location.hash : "";
@@ -48,13 +29,17 @@ function showPath(path: string) {
   }
 }
 
-export default function Argus({ initialView }: { initialView: View }) {
+export default function Argus({ initialView, section }: { initialView: View; section?: ProfileSection }) {
+  const [returnTo, setReturnTo] = useState("/workspace");
+  const originalProfile = useRef("");
+  const [profileDirty, setProfileDirty] = useState(false);
   const [view, setView] = useState(initialView);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [signedOutNotice, setSignedOutNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [handoff, setHandoff] = useState(false);
   const [error, setError] = useState("");
@@ -68,6 +53,10 @@ export default function Argus({ initialView }: { initialView: View }) {
     const controller = new AbortController();
     const url = new URL(window.location.href);
     let start = initialView;
+    if (initialView === "profile") {
+      originalProfile.current = url.pathname + url.search;
+      setReturnTo(workspaceReturn(url.searchParams.get("next")));
+    } else setReturnTo(RUN_LINK.test(url.hash) ? `/workspace${url.hash}` : "/workspace?new=1");
     if (url.searchParams.get("view") === "signin" || url.searchParams.get("auth") === "confirmation_failed") start = "signin";
     else if (initialView === "landing" && RUN_LINK.test(url.hash)) start = "workspace";
     if (url.searchParams.get("auth") === "confirmation_failed") {
@@ -78,9 +67,9 @@ export default function Argus({ initialView }: { initialView: View }) {
     api<Session>("/api/session", { signal: controller.signal }).then(result => {
       if (controller.signal.aborted || credentialsSubmitted.current) return;
       setSession(result);
-      if (start !== "landing") {
+      if (start !== "landing" && start !== "profile") {
         setView("workspace");
-        showPath("/workspace");
+        if (url.pathname !== "/workspace") showPath("/workspace");
       }
     }).catch((error: unknown) => {
       if (controller.signal.aborted || credentialsSubmitted.current) return;
@@ -97,7 +86,7 @@ export default function Argus({ initialView }: { initialView: View }) {
   useEffect(() => {
     if (!moveAuthFocus.current) return;
     moveAuthFocus.current = false;
-    if (view === "workspace" && session) main.current?.focus();
+    if ((view === "workspace" || view === "profile") && session) main.current?.focus();
     else gateHeading.current?.focus();
   }, [session, authMode, confirmationEmail, view]);
 
@@ -115,6 +104,7 @@ export default function Argus({ initialView }: { initialView: View }) {
     credentialsSubmitted.current = true;
     setBusy(true);
     setError("");
+    setSignedOutNotice("");
     try {
       const result = await api<Signup>(creatingAccount ? "/api/signup" : "/api/session",
         json("POST", { email: address, password: data.get("password") }));
@@ -124,9 +114,14 @@ export default function Argus({ initialView }: { initialView: View }) {
         setConfirmationEmail(address);
       } else {
         setHandoff(!window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-        showPath("/workspace");
+        if (originalProfile.current) {
+          window.history.replaceState(null, "", originalProfile.current);
+          setView("profile");
+        } else {
+          showPath("/workspace");
+          setView("workspace");
+        }
         setSession(result);
-        setView("workspace");
         setAuthMode("signin");
         setEmail("");
       }
@@ -135,6 +130,7 @@ export default function Argus({ initialView }: { initialView: View }) {
   }
 
   async function signOut() {
+    if (profileDirty && !window.confirm("Discard unsaved changes and sign out?")) return;
     setBusy(true);
     setError("");
     try {
@@ -148,24 +144,30 @@ export default function Argus({ initialView }: { initialView: View }) {
     finally { setBusy(false); }
   }
 
-  function expireSession() {
+  function expireSession(reason = "Your session expired. Sign in to reopen your runs.", notice = "") {
     moveAuthFocus.current = true;
     setHandoff(false);
     setSession(null);
     setView("signin");
     showPath("/sign-in");
-    setError("Your session expired. Sign in to reopen your runs.");
+    setError(reason);
+    setSignedOutNotice(notice);
+    if (notice) originalProfile.current = "";
   }
 
-  const isWorkspace = view === "workspace";
-  return <div className="app-frame" data-view={view}>
+  const isProfile = view === "profile";
+  const isWorkspace = view === "workspace" || isProfile;
+  const shellView = isWorkspace ? "workspace" : view;
+  const profileURL = `/profile?next=${encodeURIComponent(returnTo)}`;
+  return <div className="app-frame" data-view={shellView} data-appearance={session?.preferences?.appearance}
+    data-density={session?.preferences?.density}>
     <a className="skip-link" href={isWorkspace && session ? "#work" : "#main"} onClick={event => {
       if (isWorkspace && session) {
         event.preventDefault();
         document.getElementById("work")?.focus();
       }
     }}>Skip to main content</a>
-    <header className="masthead" data-view={view}>
+    <header className="masthead" data-view={shellView}>
       <a href={isWorkspace ? "/workspace" : "/"} className="brand" aria-label={isWorkspace ? "Argus workspace" : "Argus home"}>
         <Image src={monogram} alt="" width={40} height={40} unoptimized />
         Argus
@@ -173,9 +175,13 @@ export default function Argus({ initialView }: { initialView: View }) {
       {isWorkspace ? <>
         <span className="product">Review workspace</span>
         {session && <div className="account">
-          <span title={session.email}>{session.email}</span>
-          <button type="button" className="button secondary open-history" aria-haspopup="dialog"
-            aria-controls="history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}>Saved runs</button>
+          <a className="profile-pill" href={profileURL} aria-label="Open profile" aria-current={isProfile ? "location" : undefined}
+            title={session.email}>
+            <ProfileAvatar session={session} />
+            <span className="profile-email">{session.email}</span>
+          </a>
+          {!isProfile && <button type="button" className="button secondary open-history" aria-haspopup="dialog"
+            aria-controls="history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}>Saved runs</button>}
           <button type="button" className="button secondary" onClick={signOut} disabled={busy}>Sign out</button>
         </div>}
       </> : view === "landing" && <nav className="site-nav" aria-label="Primary">
@@ -190,17 +196,21 @@ export default function Argus({ initialView }: { initialView: View }) {
     </div>}
     <main ref={main} id="main" className="shell" tabIndex={-1}>
       {view === "landing" ? <Landing /> : isWorkspace ?
-        session ? <Workspace key={session.email} onUnauthorized={expireSession} sessionError={error}
-          historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} /> :
+        session ? isProfile ? <Profile key={section} section={section ?? "account"} returnTo={returnTo}
+          session={session} onSession={setSession} onUnauthorized={expireSession} sessionError={error} onDirty={setProfileDirty}
+          onDeleted={() => expireSession("", "Your Argus account and its data were deleted.")} /> :
+          <Workspace key={session.email} onUnauthorized={expireSession} sessionError={error}
+            session={session} onLocation={setReturnTo} historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} /> :
           <p className="loading session-loading" role="status">Opening your workspace…</p> :
         <AuthEntry creatingAccount={creatingAccount} confirmationEmail={confirmationEmail} email={email}
-          busy={busy} error={error} headingRef={gateHeading} onEmail={setEmail} onSubmit={authenticate} onSwitch={switchAuthMode} />}
+          busy={busy} error={error} notice={signedOutNotice} headingRef={gateHeading} onEmail={setEmail} onSubmit={authenticate} onSwitch={switchAuthMode} />}
     </main>
   </div>;
 }
 
-function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }: {
+function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, session, onLocation }: {
   onUnauthorized: () => void; sessionError: string; historyOpen: boolean; setHistoryOpen: (open: boolean) => void;
+  session: Session; onLocation: (path: string) => void;
 }) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [ocr, setOcr] = useState<OcrMode>();
@@ -216,7 +226,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
   const [restart, setRestart] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
-  const [decisionFilter, setDecisionFilter] = useState("all");
+  const [decisionFilter, setDecisionFilter] = useState<string>(session.preferences?.decision_filter || "all");
   const [managed, setManaged] = useState<Run>();
   const removedRuns = useRef(new Set<string>());
   const [active, setActive] = useState<{ id: string } | null>(null);
@@ -286,6 +296,11 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
     }
     api<{ runs: Run[]; ocr: OcrMode }>("/api/runs", { signal: controller.signal }).then(({ runs, ocr }) => {
       if (controller.signal.aborted) return;
+      if (!id && !selected.current && session.preferences?.landing === "last" &&
+          new URLSearchParams(window.location.search).get("new") !== "1") {
+        const last = [...runs].filter(saved => !saved.deleting_at).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+        if (last) select(last.id);
+      }
       setRuns((current) => {
         const byId = new Map(runs.filter(saved => !removedRuns.current.has(saved.id)).map(saved => [saved.id, saved]));
         for (const saved of current) if ((byId.get(saved.id)?.revision ?? -1) <= saved.revision) byId.set(saved.id, saved);
@@ -307,7 +322,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
         const { run } = await api<{ run: Run }>(`/api/runs/${id}`, { signal: controller.signal });
         if (controller.signal.aborted) return;
         record(run);
-        if (run.status === "queued" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now())) {
+        if (run.pdf_cleanup_pending || run.status === "queued" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now())) {
           timer = setTimeout(refresh, 5000);
         }
       } catch (error) { if (!controller.signal.aborted) fail(error); }
@@ -332,7 +347,8 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
     selected.current = id;
     focusRequested.current = id;
     setActive({ id });
-    window.history.replaceState(null, "", `#${id}`);
+    window.history.replaceState(null, "", `/workspace#${id}`);
+    onLocation(`/workspace#${id}`);
   }
 
   async function process(id: string) {
@@ -439,7 +455,9 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
     setActive(null);
     setRun(null);
     setError("");
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    const path = session.preferences?.landing === "last" ? "/workspace?new=1" : "/workspace";
+    window.history.replaceState(null, "", path);
+    onLocation("/workspace?new=1");
     if (!active) document.getElementById("workspace-title")?.focus();
   }
 
@@ -476,7 +494,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
       </div>
     </div>}
     {visibleRuns.length > 0 ? <ul className="history-list" aria-label="Saved policy runs">{visibleRuns.map(item =>
-      <SavedRun key={item.id} run={item} current={active?.id === item.id && !showIntake}
+      <SavedRun key={item.id} run={item} personal={session.personal} preferences={session.preferences} current={active?.id === item.id && !showIntake}
         onOpen={() => {
           setError("");
           setUploadId(undefined);
@@ -515,12 +533,13 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen }
           if (selected.current === managed.id) newAnalysis();
           else document.getElementById("history")?.focus();
         }} />}
-      {!showIntake && run ? <RunResult key={run.id} run={run} working={working} processing={processingId === run.id}
+      {!showIntake && run ? <RunResult key={run.id} run={run} preferences={session.preferences} working={working} processing={processingId === run.id}
         onProcess={() => action(() => process(run.id))} onConfirm={(value) => confirm(run.id, value)} /> :
         !showIntake ? <p className="loading" role="status">Opening saved run…</p> :
         <section className="intake" aria-labelledby="workspace-title">
-          <header className="intake-heading">
+          <header className="intake-heading"><p className="page-eyebrow">Policy check</p>
             <h1 id="workspace-title" tabIndex={-1}>New analysis</h1>
+            <div className="title-rule" aria-hidden="true" />
             <p>Check own damage and third-party commission against the insurer’s rate card.</p>
           </header>
           <form className="upload" onSubmit={upload} aria-busy={uploading}>

@@ -100,6 +100,7 @@ export function extract(
   allowCloud: boolean,
   reserveGemini?: (page: number) => Promise<boolean>,
   progress?: (completed: number, total: number) => Promise<void>,
+  onSendToCloud?: () => void,
 ): Promise<Extraction> {
   return withPdf(pdf, async (file, count) => {
     const deadline = AbortSignal.timeout(12 * 60_000);
@@ -156,6 +157,7 @@ export function extract(
             if (!reserved) throw new ReaderError("quota_budget_exhausted");
             if (deadline.aborted) throw new ReaderError("ocr_deadline");
           }
+          onSendToCloud?.();
           const reading = await readLive(reader, number, image, deadline);
           if (!await usable(reading)) throw new ReaderError("ocr_quote_unconfirmed");
           return reading;

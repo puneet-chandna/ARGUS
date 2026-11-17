@@ -10,10 +10,11 @@ function config() {
   return { url, key };
 }
 
-export async function authClient() {
+export async function authClient(userAgent?: string | null) {
   const { url, key } = config();
   const jar = await cookies();
   return createServerClient(url, key, {
+    ...(userAgent ? { global: { headers: { "User-Agent": userAgent.slice(0, 512) } } } : {}),
     cookieOptions: {
       httpOnly: true,
       sameSite: "lax",
@@ -34,6 +35,22 @@ export async function reviewer() {
   const { data, error } = await auth.auth.getUser();
   if (error || !data.user) throw new HttpError(401, "Sign in to open your workspace.");
   return { auth, user: data.user };
+}
+
+export async function verifyCurrentPassword(userId: string, email: string, password: string) {
+  const { url, key } = config();
+  const check = createClient(url, key, {
+    global: { headers: { "User-Agent": "Argus password verification" } },
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+  });
+  // Older Auth servers can ignore updateUser's current_password field.
+  const { data, error } = await check.auth.signInWithPassword({ email, password });
+  if (error?.status === 429) throw new HttpError(429, "Too many attempts. Try again later.");
+  if (data.session) {
+    const revoked = await check.auth.signOut({ scope: "local" });
+    if (revoked.error) throw revoked.error;
+  }
+  if (error || !data.session || data.user?.id !== userId) throw new HttpError(422, "Current password is incorrect.");
 }
 
 export function serviceClient() {

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { runRateLabel, RunStatus } from "./report";
+import { RunStatus } from "./report";
+import { commissionLabel, profileDate, type Personal, type Preferences } from "../lib/profile-settings";
 import type { Run } from "./report";
 
-const dates = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const fullDates = new Intl.DateTimeFormat("en-GB", { dateStyle: "full", timeStyle: "long" });
 
-export function SavedRun({ run, current, onOpen, onManage }: {
-  run: Run; current: boolean; onOpen: () => void; onManage: () => void;
+
+export function SavedRun({ run, current, onOpen, onManage, personal, preferences }: {
+  run: Run; current: boolean; onOpen: () => void; onManage: () => void; personal?: Personal; preferences?: Preferences;
 }) {
   const row = useRef<HTMLLIElement>(null);
   const [detail, setDetail] = useState<Run>();
@@ -39,7 +39,7 @@ export function SavedRun({ run, current, onOpen, onManage }: {
   const vehicle = [fact("make"), fact("model")].filter(Boolean).join(" ");
   const rates = (["od", "tp"] as const).flatMap(key => {
     const rate = report?.[key].rate;
-    return rate == null ? [] : [`${key.toUpperCase()} ${runRateLabel(rate)}`];
+    return rate == null ? [] : [`${key.toUpperCase()} ${commissionLabel(rate, preferences)}`];
   }).join(" / ");
   const status = run.deleting_at ? "deleting" : run.decision ?? report?.status ?? run.status;
   const title = run.display_name || [fact("insurer"), vehicle || fact("policy_type"), rates].filter(Boolean).join(" · ") ||
@@ -50,7 +50,7 @@ export function SavedRun({ run, current, onOpen, onManage }: {
   return <li ref={row} className="history-row" data-current={current}>
     <button className="history-item" type="button" aria-current={current || undefined} onClick={onOpen}>
       <strong>{title}</strong>
-      <time dateTime={run.created_at} title={fullDates.format(created)}>{dates.format(created)}</time>
+      <time dateTime={run.created_at} title={created.toLocaleString("en-GB", { dateStyle: "full", timeStyle: "long", timeZone: personal?.time_zone ?? undefined })}>{profileDate(run.created_at, personal)}</time>
       <span className="run-meta"><RunStatus status={status} />{run.pinned && <span>Pinned</span>}</span>
       <span className="history-filename">{run.filename}</span>
     </button>

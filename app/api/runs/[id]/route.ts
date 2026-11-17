@@ -33,6 +33,7 @@ export const POST = endpoint(async (_request, route: Context) => {
 
   after(async () => {
     let report: Report;
+    let ocrMode: "local" | "external" = "local";
     try {
       const { pdf } = await store.pdf(id);
       const bytes = new Uint8Array(await pdf.arrayBuffer());
@@ -42,17 +43,20 @@ export const POST = endpoint(async (_request, route: Context) => {
         (!claim.allow_cloud || !Object.keys(reviewed.reader_failures).length) ? reviewed : null);
       const extraction = reusable ? rebindExtraction(reusable, claim.filename)
         : await extract(bytes, claim.filename, claim.allow_cloud, () => store.reserveGemini(claim),
-          (checked, total) => store.reportProgress(claim, checked, total).catch(() => {}));
+          (checked, total) => store.reportProgress(claim, checked, total).catch(() => {}),
+          () => { ocrMode = "external"; });
       report = applyRating(reviewed && reusable !== reviewed ? reuseConfirmations(extraction, reviewed) : extraction);
     } catch (error) {
       const message = error instanceof PdfError
         ? "The stored PDF could not be rendered."
         : "Analysis could not finish. Retry from your saved original.";
-      await store.finish(claim, null, message);
+      await store.finish(claim, null, message, ocrMode);
       return;
     }
-    const completed = await store.finish(claim, report, null);
-    if (completed.revision === claim.revision + 1) await store.cacheOcr(completed);
+    const completed = await store.finish(claim, report, null, ocrMode);
+    if (completed.revision === claim.revision + 1) {
+      await Promise.allSettled([store.cacheOcr(completed), store.cleanupOriginal(completed.id)]);
+    }
   });
   return json({ run: present(claim) }, 202);
 });

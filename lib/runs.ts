@@ -18,6 +18,9 @@ type Run = {
   checksum: string;
   size_bytes: number;
   allow_cloud: boolean;
+  ocr_mode?: "external" | "local" | null;
+  pdf_deleted_at?: string | null;
+  pdf_cleanup_pending?: boolean;
   created_at: string;
   revision: number;
   lease_until: string | null;
@@ -31,8 +34,8 @@ const BUCKET = "argus-policy-pdfs";
 const summary = "id,filename,display_name,pinned,deleting_at,checksum,status,error,revision,created_at,lease_until,decision:result->>status";
 
 export function present(run: Run, includeResult = true) {
-  const { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, result, lease_until, ocr_progress } = run;
-  return { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, lease_until, ocr_progress, decision: result?.status ?? null, ...(includeResult ? { result } : {}) };
+  const { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, result, lease_until, ocr_progress, pdf_deleted_at, pdf_cleanup_pending } = run;
+  return { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, lease_until, ocr_progress, pdf_deleted_at, pdf_cleanup_pending, decision: result?.status ?? null, ...(includeResult ? { result } : {}) };
 }
 
 export function runStore(client: SupabaseClient, owner: string) {
@@ -90,6 +93,7 @@ export function runStore(client: SupabaseClient, owner: string) {
     async pdf(id: string) {
       const run = await this.get(id);
       if (run.deleting_at) throw new HttpError(410, "This run is being deleted.");
+      if (run.pdf_deleted_at || run.pdf_cleanup_pending) throw new HttpError(410, "The original PDF is unavailable after analysis.");
       const { data, error } = await bucket.download(pdfObject(owner, run.id));
       if (error) throw error;
       return { run, pdf: data };
@@ -140,14 +144,43 @@ export function runStore(client: SupabaseClient, owner: string) {
         .match({ ...owned(claim.id), status: "processing", revision: claim.revision })
         .gt("lease_until", new Date().toISOString()).abortSignal(AbortSignal.timeout(2000));
     },
-    async finish(claim: Run, result: Report | null, errorMessage: string | null) {
+    async finish(claim: Run, result: Report | null, errorMessage: string | null, ocrMode: Run["ocr_mode"] = "local") {
+      const { data: prefs, error: prefError } = result ? await client.from("argus_user_preferences")
+        .select("delete_originals").eq("owner_id", owner).maybeSingle() : { data: null, error: null };
+      if (prefError) throw prefError;
       const { data, error } = await client.from(TABLE).update({
         status: result ? "complete" : "failed", result, error: errorMessage, lease_until: null,
-        revision: claim.revision + 1,
+        revision: claim.revision + 1, ocr_mode: ocrMode, pdf_cleanup_pending: Boolean(prefs?.delete_originals),
       }).match({ ...owned(claim.id), status: "processing", revision: claim.revision })
         .gt("lease_until", new Date().toISOString()).select("*").maybeSingle<Run>();
       if (error) throw error;
       return data ?? this.get(claim.id);
+    },
+    async cleanupOriginal(id: string) {
+      const identity = owned(id);
+      const pending = await client.from(TABLE).select("id").match({ ...identity, pdf_cleanup_pending: true, status: "complete" })
+        .is("deleting_at", null).maybeSingle();
+      if (pending.error) throw pending.error;
+      if (!pending.data) return;
+      const { error: storageError } = await bucket.remove([pdfObject(owner, id)]);
+      if (storageError) throw storageError;
+      const { error } = await client.from(TABLE).update({ pdf_deleted_at: new Date().toISOString(), pdf_cleanup_pending: false })
+        .match(identity);
+      if (error) throw error;
+    },
+    async removeAll() {
+      const cutoff = new Date().toISOString();
+      const active = await client.from(TABLE).select("id").eq("owner_id", owner)
+        .or(`and(status.eq.processing,lease_until.gt.${cutoff}),and(status.eq.uploading,created_at.gt.${new Date(Date.now() - 900_000).toISOString()})`).limit(1);
+      if (active.error) throw active.error;
+      if (active.data.length) throw new HttpError(409, "Wait for active uploads and analyses to finish before deleting your runs.");
+      for (;;) {
+        const { data, error } = await client.from(TABLE).select("id").eq("owner_id", owner).lte("created_at", cutoff)
+          .order("created_at").order("id").limit(50);
+        if (error) throw error;
+        if (!data.length) return;
+        for (const run of data) await this.remove(run.id, true);
+      }
     },
     async manage(current: Run, displayName: string | null, pinned: boolean) {
       const { data, error } = await client.from(TABLE).update({
@@ -158,13 +191,14 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (!data) throw new HttpError(409, "The run changed. Reopen its settings and try again.");
       return data;
     },
-    async remove(id: string) {
-      let run: Run;
-      try {
-        run = await this.get(id);
-      } catch (error) {
-        if (error instanceof HttpError && error.status === 404) return;
-        throw error;
+    async remove(id: string, includeAbandonedUpload = false) {
+      let query = client.from(TABLE).select("*").match(owned(id));
+      if (!includeAbandonedUpload) query = query.neq("status", "uploading");
+      const { data: run, error: readError } = await query.maybeSingle<Run>();
+      if (readError) throw readError;
+      if (!run) return;
+      if (run.status === "uploading" && Date.parse(run.created_at) > Date.now() - 900_000) {
+        throw new HttpError(409, "An upload is still active. Try again later.");
       }
       if (!run.deleting_at) {
         const now = new Date().toISOString();
