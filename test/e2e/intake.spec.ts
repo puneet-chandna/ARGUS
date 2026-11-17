@@ -106,6 +106,22 @@ function running(pagesDone: number, cachedPages: number[] = []) {
 const files = { name: "policy.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-test") };
 const empty = { runs: [], ocr: { live: "ready", cache: false } };
 
+test("workspace refresh requests the session and run history once", async ({ page }) => {
+  await page.route("**/api/session", route => route.fulfill({ json: { email: "reviewer@example.test" } }));
+  await page.route("**/api/runs", route => route.fulfill({ json: empty }));
+  const historyLoaded = () => page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/runs" && response.ok());
+  await Promise.all([historyLoaded(), page.goto("/workspace")]);
+
+  const requests: string[] = [];
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/session" || path === "/api/runs") requests.push(path);
+  });
+  await Promise.all([historyLoaded(), page.reload()]);
+  expect(requests).toEqual(["/api/session", "/api/runs"]);
+});
+
 for (const cache of ["miss", "partial"] as const) {
   test(`Reading Eye reports persisted ${cache} progress, reattaches and reveals the result`, async ({ page }) => {
     let next: object = cache === "partial" ? running(9, [1,2,3,4,5,12,13,14,15]) : running(0);

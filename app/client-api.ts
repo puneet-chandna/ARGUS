@@ -3,6 +3,11 @@ export class RequestError extends Error {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  if (init?.signal) {
+    // Let same-turn effect cleanup cancel the request before it reaches the network.
+    await Promise.resolve();
+    init.signal.throwIfAborted();
+  }
   const response = await fetch(path, { cache: "no-store", ...init });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
