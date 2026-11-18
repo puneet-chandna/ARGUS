@@ -267,7 +267,7 @@
   "clarifications": [],
   "od": {
     "status": "ambiguous",
-    "reason": "A verified eligible private-car GWP is missing. A verified fuel in the HDFC classification is missing.",
+    "reason": "Zone 2. Confirm eligible private-car GWP to select the OD slab.",
     "rate": null,
     "applicable": true
   },
@@ -532,11 +532,49 @@
           "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
           "page": 2,
           "row": "Geography, North — Haryana (Zone-2)"
+        },
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "HR26",
+          "method": "manual_source_verification"
+        }
+      ],
+      "policy_fields": [
+        "rto"
+      ]
+    },
+    {
+      "step": "Current NCB is 35%.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Zone 2, Package NCB column headings"
+        },
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "35",
+          "method": "manual_source_verification"
+        }
+      ],
+      "policy_fields": [
+        "current_ncb"
+      ]
+    },
+    {
+      "step": "The applicable fuel columns agree, so fuel does not change the OD rate.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Zone 2, Package Petrol and Non-Petrol NCB columns"
         }
       ]
     },
     {
-      "step": "The source slab uses comprehensive plus SAOD private-car GWP, excluding SATP. The policy's net OD premium alone does not establish this input.",
+      "step": "The slab uses comprehensive plus stand-alone OD private-car GWP and excludes stand-alone TP. The policy’s net OD premium does not establish this input.",
       "sources": [
         {
           "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
@@ -544,33 +582,38 @@
           "row": "Slab footnote immediately below Zone 2"
         }
       ]
-    },
-    {
-      "step": "A verified fuel in the HDFC classification is missing.",
-      "sources": [
-        {
-          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
-          "page": 1,
-          "row": "Non Petrol and EV/Hybrid footnotes"
-        }
-      ]
-    },
-    {
-      "step": "A verified eligible private-car GWP is missing. A verified fuel in the HDFC classification is missing.",
-      "sources": [
-        {
-          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
-          "page": 1,
-          "row": "Zone 2, Package category and fuel/NCB headers"
-        }
-      ]
     }
   ],
   "status": "ambiguous",
-  "rule_version": "ts1-5a79a3ea91c8efa6",
+  "rule_version": "ts1-5a79a3ea91c8efa6-hdfc-od-v3",
   "business_type": "rollover",
   "confidence": {
     "level": "low",
     "reason": "At least one applicable rate is undetermined."
+  },
+  "review_fields": [
+    "eligible_private_car_gwp"
+  ],
+  "rating_trace_start": 21,
+  "gwp_preview": {
+    "amount": "11869",
+    "rate": "17.5",
+    "zone": 2,
+    "sources": [
+      {
+        "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+        "page": 1,
+        "row": "Zone 2, >10-50k — Package, Matching fuel and NCB columns"
+      },
+      {
+        "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+        "page": 1,
+        "raw": "11869",
+        "method": "manual_source_verification"
+      }
+    ],
+    "policy_fields": [
+      "net_premium"
+    ]
   }
 }

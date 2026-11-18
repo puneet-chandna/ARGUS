@@ -6,6 +6,7 @@ import { ExportButton } from "./profile-export-button";
 import { readerNotice } from "./ocr";
 import { confirmationError, conflictFields, requiredReviewFields } from "../lib/review-fields";
 import type { RunProgress } from "../lib/progress";
+import type { GwpPreview } from "../lib/rating/types";
 import "./workspace.css";
 
 export type Source = {
@@ -25,7 +26,7 @@ type Fact = {
   status: string;
   reason: string;
   evidence: Source[];
-  confirmation?: { page: number };
+  confirmation?: { file: string; page?: number };
 };
 
 type Decision = "resolved" | "ambiguous" | "unsupported";
@@ -37,6 +38,7 @@ type Report = {
   tp: Rate;
   fields: Record<string, Fact>;
   review_fields?: readonly string[];
+  gwp_preview?: GwpPreview;
   trace: { step: string; sources: Source[] }[];
   rating_trace_start?: number;
   rule_version?: string;
@@ -65,7 +67,7 @@ export type Run = {
   duration_ms?: number | null;
 };
 
-type Clarification = { field: string; value: string; page: number };
+type Clarification = { field: string; value: string; page?: number; source?: string };
 export type ReviewSubmission = { confirmations: Clarification[]; revision: number; guided?: true };
 
 const labels = {
@@ -185,7 +187,25 @@ function readingGroups(evidence: Source[]) {
   return [...groups.values()];
 }
 
-function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, working, advanced, onConfirm }: {
+function GwpNote({ preview, pdf }: { preview: GwpPreview; pdf: string }) {
+  const [whole, fraction] = preview.amount.split(".");
+  const amount = `₹${BigInt(whole).toLocaleString("en-IN")}${fraction ? `.${fraction}` : ""}`;
+  const grid = preview.sources.find(gridSource);
+  const pages = [...new Map(preview.sources.filter(source => source.page && !gridSource(source))
+    .map(source => [source.page, source])).values()];
+  return <aside className="gwp-note" aria-label="Conditional OD estimate">
+    <p><strong>Conditional OD estimate</strong></p>
+    <p>If HDFC ERGO confirms <strong>{amount}</strong> is the eligible GWP for this lookup, enter <strong>{preview.amount}</strong> and
+      cite that confirmation. That would give <strong>{preview.rate}% OD</strong> in <strong>Zone {preview.zone}</strong>.</p>
+    <p>Until then, <strong>OD stays undetermined</strong> and <strong>TP stays unsupported</strong>.</p>
+    <div className="run-citation-links">
+      {pages.map(source => <Citation key={source.page} source={source} pdf={pdf} />)}
+      {grid && <Citation source={grid} pdf={pdf} />}
+    </div>
+  </aside>;
+}
+
+function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, working, advanced, onConfirm, gwpPreview, pdf }: {
   field: string;
   fact?: Fact;
   page: number;
@@ -196,36 +216,43 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
   working: boolean;
   advanced: boolean;
   onConfirm: (value: Clarification) => void;
+  gwpPreview?: GwpPreview;
+  pdf: string;
 }) {
-  const groups = readingGroups(fact?.evidence ?? []);
+  const brokerageRecord = field === "eligible_private_car_gwp";
+  const groups = brokerageRecord ? [] : readingGroups(fact?.evidence ?? []);
   const candidates = groups.flat().filter(source => source.raw && !confirmationError(field, source.raw));
   const suggestion = candidates[0] && candidates.every(source => source.raw?.toLowerCase() === candidates[0].raw?.toLowerCase())
     ? candidates[0] : undefined;
   const [custom, setCustom] = useState(!conflicting || Boolean(draft));
   const [value, setValue] = useState(draft?.value ?? "");
+  const [source, setSource] = useState(draft?.source ?? "");
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const answer = value.trim();
   const citedPage = page;
+  const sourceReady = brokerageRecord ? Boolean(source.trim()) : citedPage > 0 && citedPage <= pages;
 
   function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!answer || !citedPage || citedPage > pages || working) return;
+    if (!answer || !sourceReady || working) return;
     const error = confirmationError(field, answer);
     setError(error ?? "");
-    if (!error) onConfirm({ field, value: answer, page: citedPage });
+    if (!error) onConfirm({ field, value: answer, ...(brokerageRecord ? { source: source.trim() } : { page: citedPage }) });
   }
 
   return <article className="run-review" data-advanced={advanced} aria-labelledby="review-editor-title">
     <h3 id="review-editor-title">{fieldName(field)}</h3>
-    {draft && <p className="review-confirmed">Confirmed for this review · {draft.value} · Page {draft.page}</p>}
-    <p>{conflicting ? `The readings disagree on ${fieldName(field).toLowerCase()}. Compare each value with its page in the original policy.`
+    {draft && <p className="review-confirmed">Confirmed for this review · {draft.value} · {draft.source ?? `Page ${draft.page}`}</p>}
+    <p>{brokerageRecord ? "Enter the eligible comprehensive plus stand-alone OD private-car gross written premium. Exclude stand-alone TP. Use the amount reported in the brokerage records for the applicable slab."
+      : conflicting ? `The readings disagree on ${fieldName(field).toLowerCase()}. Compare each value with its page in the original policy.`
       : field === "policy_type" ? "Copy the full policy title from the policy schedule."
       : field === "insurer" ? "Use the current insurer named in the policy schedule."
       : field === "rto" ? "Enter the RTO code from the vehicle registration, such as MH01."
       : field === "fuel" ? "Use the fuel type printed in the vehicle details."
       : field === "engine_cc" ? "Use the cubic capacity printed in the vehicle details, in cc."
       : "Enter the value shown in the original policy."}</p>
+    {brokerageRecord && gwpPreview && <GwpNote preview={gwpPreview} pdf={pdf} />}
     <form onSubmit={confirm} className="review-confirmation">
       {conflicting && <div className="review-readings">
         {groups.map((sources, index) => <section key={index} data-reader={index + 1}>
@@ -255,14 +282,16 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
         disabled={working} onClick={() => {
           setValue(suggestion.raw ?? ""); setError(""); openPage(suggestion.page!, suggestion);
         }}>Use suggested value · {suggestion.raw}</button>}
-      {custom && <label>Value from the policy
+      {(custom || brokerageRecord) && <label>{brokerageRecord ? "Eligible GWP in rupees" : "Value from the policy"}
         <input ref={input} value={value} onChange={event => { setValue(event.target.value); setError(""); }}
           maxLength={220} required disabled={working} />
       </label>}
       {custom && field.endsWith("_date") && <p>Use YYYY-MM-DD.</p>}
-      {citedPage && <p>Source · page {citedPage}</p>}
+      {brokerageRecord ? <label>GWP source
+        <input value={source} onChange={event => setSource(event.target.value)} maxLength={220} required disabled={working} />
+      </label> : citedPage > 0 && <p>Source · page {citedPage}</p>}
       {error && <p className="error" role="alert">{error}</p>}
-      <button type="submit" className="button primary" disabled={working || !answer || !citedPage || citedPage > pages}>
+      <button type="submit" className="button primary" disabled={working || !answer || !sourceReady}>
         {draft ? "Update confirmation" : "Confirm value"}
       </button>
     </form>
@@ -444,7 +473,8 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
           </select>
         </label>
         <ConfirmField key={field} field={field} fact={report.fields[field]} page={currentPage} openPage={openPage} pages={pages}
-          draft={drafts[field]} conflicting={conflicts.includes(field)} working={busy} advanced={Boolean(lastConfirmed)} onConfirm={confirm} />
+          draft={drafts[field]} conflicting={conflicts.includes(field)} working={busy} advanced={Boolean(lastConfirmed)} onConfirm={confirm}
+          gwpPreview={report.gwp_preview} pdf={pdf} />
       </div>
     </div>
     <footer className="review-footer">
@@ -480,12 +510,13 @@ function Commission({ label, abbreviation, part, sharedReason, preferences }: {
   </div>;
 }
 
-function Facts({ entries, pdf, filename }: { entries: [string, Fact][]; pdf: string; filename: string }) {
+function Facts({ entries, pdf }: { entries: [string, Fact][]; pdf: string }) {
   return <dl className="run-fact-list">{entries.map(([field, fact]) => <div key={field} className="run-fact">
     <dt>{fieldName(field)}</dt>
     <dd>
       {fact.value != null ? <strong>{fact.value}</strong> : factReason(fact.reason)}
-      {fact.confirmation && <p className="run-source-note">Reviewer confirmed on <Citation source={{ file: filename, page: fact.confirmation.page }} pdf={pdf} /></p>}
+      {fact.confirmation && <p className="run-source-note">{fact.confirmation.page ? "Reviewer confirmed on " : "Reviewer source · "}
+        <Citation source={fact.confirmation} pdf={pdf} /></p>}
       <Sources items={fact.evidence} pdf={pdf} />
     </dd>
   </div>)}</dl>;
@@ -617,7 +648,8 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
         <ul>
           {required.map(field => {
             const fact = report.fields[field];
-            const pages = [...new Set(fact?.evidence.flatMap(source => source.page ? [source.page] : []) ?? [])];
+            const pages = field === "eligible_private_car_gwp" ? [] :
+              [...new Set(fact?.evidence.flatMap(source => source.page ? [source.page] : []) ?? [])];
             return <li key={field}>
               <button type="button" className="run-review-field" onClick={() => openReview(field)}>
                 {fieldName(field)}
@@ -666,7 +698,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
             {report.rule_version && <p className="run-source-note">Rate-card version {report.rule_version}</p>}
           </> : <>
             {confirmed.length > 0
-              ? <Facts entries={confirmed} pdf={pdf} filename={run.filename} />
+              ? <Facts entries={confirmed} pdf={pdf} />
               : <p className="run-empty">No policy facts could be verified for this run.</p>}
           </>)}
         </div>)}

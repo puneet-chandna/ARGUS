@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
 import { decide, type PageRead } from "../../lib/ingestion/facts.ts";
+import { runStore } from "../../lib/runs.ts";
 import { checksum, pdfObject } from "../../lib/upload.ts";
 import { verifiedOcrProfile } from "../../lib/verified-ocr.ts";
 import { syntheticPdf } from "../fixtures/pdf.ts";
@@ -140,6 +141,67 @@ test("the Tata commission card shows 38% and reopens the cited result and privat
   expect(stored.data?.result.tp.rate).toBe("38");
   expect(stored.data?.result.fields).toEqual(saved.run.result.fields);
   expect(stored.data?.revision).toBe(saved.run.revision + 1);
+});
+
+test("an unseen HDFC package can finish OD with eligible GWP and its own source", async ({ page, reviewer }) => {
+  const name = "unseen-hdfc.pdf";
+  const insurer = "HDFC ERGO General Insurance Company Limited";
+  const title = "Private Car Comprehensive Policy";
+  const premium = "Net Premium 75000";
+  const lines = [insurer, title, "Registration No: MH-12-AB-0123", "Less: No Claim Bonus (20%)", premium];
+  const pdf = syntheticPdf(...lines);
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, page: 1, model: "test", transcript: lines.join("\n"),
+    candidates: [
+      { field: "insurer", value: insurer, quote: insurer, box: null },
+      { field: "policy_type", value: title, quote: title, box: null },
+      { field: "net_premium", value: "75000", quote: premium, box: null },
+    ],
+  }));
+  const seed = await reviewer.db.from("argus_ocr_cache").insert({
+    owner_id: reviewer.id, checksum: checksum(pdf), profile: verifiedOcrProfile(), grounded_text: [],
+    extraction: { filename: name, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
+      reader_failures: {}, clarifications: [], fields: decide(name, reads) },
+  });
+  expect(seed.error).toBeNull();
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await uploadPdf(page, name, pdf);
+  await expect(page.getByRole("region", { name: "One policy detail to review" })).toContainText("Eligible private-car GWP");
+  await page.getByRole("button", { name: "Eligible private-car GWP", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const note = dialog.getByRole("complementary", { name: "Conditional OD estimate" });
+  await expect(note).toContainText("₹75,000");
+  await expect(note).toContainText("21% OD");
+  await expect(note).toContainText("Zone 1");
+  await expect(note).toContainText("OD stays undetermined");
+  await expect(dialog.getByRole("textbox", { name: "Eligible GWP in rupees" })).toHaveValue("");
+  await dialog.getByRole("textbox", { name: "Eligible GWP in rupees" }).fill("25000");
+  await expect(dialog.getByRole("button", { name: "Confirm value" })).toBeDisabled();
+  await dialog.getByRole("textbox", { name: "GWP source" }).fill("March private-car GWP ledger");
+  await dialog.getByRole("button", { name: "Confirm value" }).click();
+  await dialog.getByRole("button", { name: "Recalculate commission" }).click();
+  const commission = page.getByRole("region", { name: "Broker commission" });
+  await expect(commission).toContainText("19.5%");
+  await expect(commission).toContainText("Unsupported");
+  await page.getByRole("tab", { name: /Policy facts/ }).click();
+  await expect(page.getByRole("tabpanel", { name: /Policy facts/ })).toContainText("March private-car GWP ledger");
+
+  const id = new URL(page.url()).hash.slice(1);
+  const store = runStore(reviewer.db, reviewer.id);
+  const saved = (await store.get(id)).result!;
+  const gwp = saved.fields.eligible_private_car_gwp;
+  const legacy = { ...saved, fields: { ...saved.fields, eligible_private_car_gwp: {
+    ...gwp, confirmation: { ...gwp.confirmation, page: 1, file: name },
+  } } };
+  const queued = await reviewer.db.from("argus_runs").update({ result: legacy, pdf_cleanup_pending: true })
+    .match({ id, owner_id: reviewer.id });
+  expect(queued.error).toBeNull();
+  await store.cleanupOriginal(id);
+  await page.reload();
+  await expect(commission).toContainText("Confirm eligible private-car GWP");
+  await expect(page.getByRole("button", { name: "Eligible private-car GWP", exact: true })).toBeVisible();
+  expect((await page.request.get(`/api/runs/${id}/pdf`)).status()).toBe(200);
 });
 
 test("the reviewer resolves an unseen policy conflict from the PDF and keeps the cited choice", async ({ page, reviewer }) => {

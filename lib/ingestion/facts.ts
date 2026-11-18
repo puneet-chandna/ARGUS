@@ -22,7 +22,7 @@ export type Evidence = {
   protocol?: string;
 };
 export type Confirmation = {
-  field: string; raw: string; value: string; page: number; file: string; type: "reviewer_confirmation";
+  field: string; raw: string; value: string; page?: number; file: string; type: "reviewer_confirmation";
 };
 export type FieldDecision = {
   value: string | null;
@@ -116,11 +116,54 @@ function normalizedLines(transcript: string) {
   return transcript.split(/\r?\n/).map(line => ` ${comparable(line)} `);
 }
 
+function registrationRto(quote: string) {
+  const match = /(?:^|[|;/])\s*(?:vehicle\s+)?(?:registration|regn)\b\.?\s*(?:number|no\.?|mark|#)?\s*[:|]?\s*([a-z]{2})[\s-]*(\d{1,2})(?:[\s-]*([a-z])(?=[\s-]+[a-z]))?([\s-]*)([a-z]{1,3})(?:[\s-]+[a-z]{1,2})?[\s-]*\d{4}\b/i.exec(quote.trim());
+  if (!match) return;
+  const [, state, district, suffix, seriesSeparator, series] = match;
+  if (state.toUpperCase() === "DL") {
+    if (suffix) return (state + district + suffix).toUpperCase();
+    // A compact letter series could start with the RTO suffix.
+    if (district.length === 1 || (!seriesSeparator && series.length > 1)) return null;
+  }
+  return (state + district).toUpperCase();
+}
+
+const currentNcbLabel = /^(?:less|current|applicable)\s*(?:[:|−-]\s*)?(?:no\s+claim\s+bonus|ncb)\b/i;
+
+function previousPolicyLines(lines: string[]) {
+  let previous = false;
+  return lines.map(line => {
+    const heading = line.replace(/^[^a-z]*(?:[ivxlcdm]+ [.):\-] +)?/, "");
+    if (/^(?:(?:details|information) (?:of|for) (?:the )?)?(?:previous|prior|old|expiring) (?:insurance|insurer|policy)\b/.test(heading)) previous = true;
+    if (/^(?:current|new) (?:insurance|policy|vehicle)\b/.test(heading)) previous = false;
+    return previous;
+  });
+}
+
+function scheduleCandidates(read: PageRead): Candidate[] {
+  const candidates = [...read.candidates];
+  const hasRto = candidates.some(candidate => candidate.field === "rto" && grounded(candidate, read.transcript));
+  const previous = previousPolicyLines(normalizedLines(read.transcript));
+  for (const [index, line] of read.transcript.split(/\r?\n/).entries()) {
+    if (previous[index]) continue;
+    const quote = line.trim();
+    const rto = !hasRto && registrationRto(quote);
+    if (rto) candidates.push({ field: "rto", value: rto, quote, box: null });
+    if (!currentNcbLabel.test(quote)) continue;
+    const percentages = [...quote.matchAll(/\b(\d{1,3}(?:\.\d+)?)\s*%/g)];
+    if (percentages.length === 1) {
+      const [percent, value] = percentages[0];
+      candidates.push({ field: "current_ncb", value, quote: quote.slice(0, percentages[0].index + percent.length), box: null });
+    }
+  }
+  return candidates;
+}
+
 const LABELS: Partial<Record<Field, RegExp>> = {
   business_type: /\b(business type|business category|transaction type)\b/,
   engine_cc: /\b(cc|cubic capacity|engine capacity|displacement)\b/,
   fuel: /\bfuel\b/,
-  rto: /\b(rto|registration|registering authority)\b/,
+  rto: /\b(rto|registration|regn|registering authority)\b/,
   rto_location: /\b(?:rto|registering authority|registration office)\b/,
   manufacture_year: /\b(manufacture|manufacturing|mfg)\b/,
   registration_year: /\b(registration|registered)\b/,
@@ -150,7 +193,8 @@ export function grounded(candidate: Candidate, transcript: string) {
 function groundedOnPage(candidate: Candidate, lines: string[]) {
   const { field, quote, value } = candidate;
   const context = comparable(quote);
-  const found = lines.filter(line => line.includes(` ${context} `));
+  const previousSections = field === "current_ncb" || field === "rto" ? previousPolicyLines(lines) : [];
+  const found = lines.filter((line, index) => !previousSections[index] && line.includes(` ${context} `));
   if (!context || !found.length) return false;
   if (field === "vehicle_class" && (policyCoverage(value) || vehicleBodyStyle(value))) return false;
   const previousInsurerLine = (field === "previous_insurer" || field === "insurer") &&
@@ -183,6 +227,13 @@ function groundedOnPage(candidate: Candidate, lines: string[]) {
   if (field === "rto") {
     const normalized = canonical(field, value);
     if (normalized) {
+      const registration = registrationRto(quote);
+      if (registration === normalized) return true;
+      if (normalized.startsWith("DL")) {
+        if (registration !== undefined) return false;
+        const code = /(?:^|[|;])\s*(?:rto(?:\s+(?:code|no\.?))?|registering\s+authority)\s*[:|]?\s*(dl[\s-]*\d{1,2}(?:[\s-]*[a-z])?)\s*(?=$|[|;])/i.exec(quote.trim())?.[1];
+        return code !== undefined && canonical(field, code) === normalized;
+      }
       const prefix = normalized.split("").join("[\\s-]*");
       return new RegExp(`\\b${prefix}(?:[\\s-]*[A-Z]{1,3}[\\s-]*[0-9]{4}\\b|\\b(?![\\s-]*[A-Z]{1,3}[\\s-]*[0-9]{4}\\b))`, "i").test(quote);
     }
@@ -193,7 +244,7 @@ function groundedOnPage(candidate: Candidate, lines: string[]) {
 export function decide(filename: string, reads: PageRead[], complete = true): Record<Field, FieldDecision> {
   const decisions = new Map<Field, FieldDecision>();
   const prepared = reads.map(read => ({
-    ...read, lines: normalizedLines(read.transcript),
+    ...read, candidates: scheduleCandidates(read), lines: normalizedLines(read.transcript),
   }));
   const headingAnchors = prepared.flatMap(read => read.candidates
     .filter(candidate => documentHeading(candidate) && groundedOnPage(candidate, read.lines))
@@ -238,6 +289,14 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
         independent.add(reader);
       }
     }
+    if (field === "current_ncb" && complete) {
+      const current = [...evidence.values()].filter(source => currentNcbLabel.test(source.quote));
+      const values = new Set(current.map(source => canonical(field, source.raw)));
+      if (values.size === 1 && new Set(current.map(source => source.reader)).size >= 2) {
+        for (const value of observed.keys()) if (!values.has(value)) observed.delete(value);
+        for (const [key, source] of evidence) if (!currentNcbLabel.test(source.quote)) evidence.delete(key);
+      }
+    }
     const citations = [...(evidence.size ? evidence : rejected).values()]
       .sort((a, b) => a.page - b.page || a.reader.localeCompare(b.reader) || a.raw.localeCompare(b.raw));
     if (field === "policy_type" && observed.size > 1) {
@@ -254,7 +313,7 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
     const match = corroboratedHeading ? [...observed.keys()][0] : [...observed].find(([, pages]) => {
       const groups = [...pages.values()];
       return groups.some(readers => readers.size >= 2) ||
-        (field === "fuel" && new Set(groups.flatMap(readers => [...readers])).size >= 2);
+        (["fuel", "current_ncb", "rto"].includes(field) && new Set(groups.flatMap(readers => [...readers])).size >= 2);
     })?.[0];
     let reason = "insufficient_agreement";
     let status: FieldDecision["status"] = "needs_review";

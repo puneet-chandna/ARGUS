@@ -3,10 +3,63 @@ import test from "node:test";
 import { canonical, decide, type PageRead } from "../lib/ingestion/index.ts";
 import { applyRating, clarifyBatch, type Report } from "../lib/report.ts";
 import { confirmationError, conflictFields, requiredReviewFields, reviewFields } from "../lib/review-fields.ts";
+import { rebindExtraction } from "../lib/verified-ocr.ts";
 
 function clarify(report: Report, input: {field: string; value: string; page: number}, pages: number) {
   return clarifyBatch(report, [input], pages);
 }
+
+test("HDFC asks for and credits an eligible GWP source independently of policy fields", () => {
+  const filename = "unseen-package.pdf";
+  const facts = { insurer: "HDFC ERGO", policy_type: "Private Car Comprehensive Policy",
+    rto: "MH12", current_ncb: "20", net_od_premium: "5200" };
+  const fields = Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+    [field, { value, status: "accepted" as const, reason: "independent_agreement", evidence: [] }]));
+  const report = applyRating({ filename, checksum: "a".repeat(64), extraction_version: "test",
+    fields, reader_failures: {}, clarifications: [] });
+  assert.deepEqual(requiredReviewFields(report), ["eligible_private_car_gwp"]);
+  assert.equal(applyRating({ ...report, fields: { ...fields, eligible_private_car_gwp: {
+    value: "5200", status: "accepted", reason: "independent_agreement", evidence: [],
+  } } }).od.rate, null);
+  assert.throws(() => clarifyBatch(report, [{ field: "eligible_private_car_gwp", value: "25000", source: "" }], 4), /brokerage record/);
+  assert.throws(() => clarify(report, { field: "eligible_private_car_gwp", value: "5200", page: 1 }, 4), /brokerage record/);
+  const confirmed = clarifyBatch(report, [{ field: "eligible_private_car_gwp", value: "25000", source: "Private-car GWP ledger, March" }], 4);
+  assert.equal(confirmed.od.rate, "19.5");
+  assert.equal(confirmed.tp.status, "unsupported");
+  assert.equal(confirmed.fields.eligible_private_car_gwp.confirmation?.page, undefined);
+  assert.ok(confirmed.trace.some(step => step.sources.some(source => source.file === "Private-car GWP ledger, March")));
+  assert.equal(rebindExtraction(confirmed, "repeat.pdf").fields.eligible_private_car_gwp, undefined);
+
+  const legacy = { ...confirmed, fields: { ...confirmed.fields, eligible_private_car_gwp: {
+    ...confirmed.fields.eligible_private_car_gwp,
+    confirmation: { ...confirmed.fields.eligible_private_car_gwp.confirmation!, file: filename, page: 1 },
+  } } };
+  for (const prior of [legacy, rebindExtraction(legacy, "repeat.pdf")]) {
+    const rerated = applyRating(prior);
+    assert.equal(rerated.od.rate, null);
+    assert.deepEqual(requiredReviewFields(rerated), ["eligible_private_car_gwp"]);
+  }
+});
+
+test("a rating blocker keeps an accepted OCR value open for correction", () => {
+  const facts = { insurer: "HDFC ERGO", policy_type: "Private Car Comprehensive Policy",
+    rto: "HR26", current_ncb: "0", fuel: "hydrogen" };
+  const fields = Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+    [field, { value, status: "accepted" as const, reason: "independent_agreement", evidence: [] }]));
+  const missingGwp = applyRating({ filename: "unseen.pdf", checksum: "a".repeat(64), extraction_version: "test",
+    fields, reader_failures: {}, clarifications: [] });
+  const gwp = { field: "eligible_private_car_gwp", value: "11869", source: "Private-car GWP ledger" };
+  const fuel = { field: "fuel", value: "diesel", page: 1 };
+  assert.deepEqual(requiredReviewFields(missingGwp), ["eligible_private_car_gwp"]);
+  assert.throws(() => clarifyBatch(missingGwp, [fuel], 4), /not awaiting review/);
+  const report = clarifyBatch(missingGwp, [gwp], 4);
+  assert.deepEqual(requiredReviewFields(report), ["fuel"]);
+  const confirmed = clarify(report, fuel, 4);
+  assert.equal(confirmed.od.rate, "10");
+  assert.deepEqual(requiredReviewFields(confirmed), []);
+
+  assert.equal(clarifyBatch(missingGwp, [gwp, fuel], 4).od.rate, "10");
+});
 
 test("a source-cited review resolves an OCR conflict and retains both readings", () => {
   const filename = "digit.pdf";

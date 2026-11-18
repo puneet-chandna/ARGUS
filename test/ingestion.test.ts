@@ -67,6 +67,43 @@ test("RTO location needs a registration authority label and vehicle class exclud
   assert.ok(!valid("vehicle_class", "Auto Secure - Liability Only Policy", "Auto Secure - Liability Only Policy"));
 });
 
+test("transcribed registrations and current premium NCB work across policies", () => {
+  for (const [plate, rto] of [["MH-12-AB-0123", "MH12"], ["UP 78 CC 9844", "UP78"], ["DL 1C AA 1234", "DL1C"]]) {
+    const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map((reader, i) => ({
+      reader, page: i + 1, model: "test",
+      transcript: `Vehicle Registration No: ${plate}\nLess: No Claim Bonus (35%) 852\nNCB 25%`,
+      candidates: [{ field: "current_ncb", value: "25", quote: "NCB 25%", box: null }],
+    }));
+    const result = decide("unseen.pdf", reads);
+    assert.equal(result.rto.value, rto);
+    assert.equal(result.current_ncb.value, "35");
+    assert.equal(decide("unseen.pdf", reads.slice(0, 1)).rto.value, null);
+    const different = { ...reads[1], transcript: reads[1].transcript.replace("35%", "45%") };
+    assert.equal(decide("unseen.pdf", [reads[0], different]).current_ncb.reason, "conflicting_readings");
+  }
+});
+
+test("previous-policy deductions cannot override the current NCB", () => {
+  const prior = "Less: No Claim Bonus (25%)";
+  const current = "No Claim Bonus 0%";
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: reader, page: 1,
+    transcript: `Current Policy Premium\n${current}\nPrevious Insurance Details\n${prior} 200`,
+    candidates: [{ field: "current_ncb", value: "0", quote: current, box: null }],
+  }));
+  const decision = decide("unseen.pdf", reads).current_ncb;
+  assert.equal(decision.value, "0");
+  assert.ok(decision.evidence.every(source => source.quote === current));
+  assert.equal(grounded({ field: "current_ncb", value: "25", quote: prior, box: null }, reads[0].transcript), false);
+  const reopened = reads.map(reading => ({ ...reading, transcript: `Previous Insurance Details\n${prior}\nCurrent Policy Premium\n${current}` }));
+  assert.equal(decide("unseen.pdf", reopened).current_ncb.value, "0");
+  for (const heading of ["3. Previous Insurance Details", "Previous Policy Details (if applicable)", "Previous Insurance Details |",
+    "II. Previous Insurance Details", "## Previous Insurance Details", "Previous Insurer Details", "Previous Policy No: 4501000"]) {
+    const decorated = reads.map(reading => ({ ...reading, transcript: reading.transcript.replace("Previous Insurance Details", heading) }));
+    assert.equal(decide("unseen.pdf", decorated).current_ncb.value, "0", heading);
+  }
+});
+
 test("normalizes unambiguous dates and exact amounts conservatively", () => {
   assert.equal(canonical("start_date", "03/04/2026"), null);
   assert.equal(canonical("start_date", "2026-02-31"), null);
@@ -87,6 +124,20 @@ test("wrong term, premium component and partial RTO cannot ground a candidate", 
   assert.equal(valid("rto", "UP7", "Registration No. UP78AB1234"), false);
   assert.equal(valid("rto", "UP78", "Registration No. UP78AB1234"), true);
   assert.equal(valid("rto", "MH01", "RTO: MH-01"), true);
+  assert.equal(valid("rto", "DL1C", "Registration No: DL 1C AA 1234"), true);
+  assert.equal(valid("rto", "DL1", "Registration No: DL 1C AA 1234"), false);
+  assert.equal(valid("rto", "DL14", "Registration No: DL14CAA1234"), false);
+  assert.equal(valid("rto", "DL14C", "Registration No: DL14CAA1234"), false);
+  assert.equal(valid("rto", "DL14C", "RTO: DL14C"), true);
+  assert.equal(valid("rto", "DL1C", "| Registration No | DL 1 C AA 1234 |"), true);
+  assert.equal(valid("rto", "DL1", "| Registration No | DL 1 C AA 1234 |"), false);
+  assert.equal(valid("rto", "DL1", "Registration Mark: DL 1 C AA 1234"), false);
+  assert.equal(valid("rto", "DL14C", "| Registration No | DL14CAA1234 |"), false);
+  assert.equal(valid("rto", "DL1C", "RTO / Regn No: DL 1 C AA 1234"), true);
+  assert.equal(valid("rto", "DL1", "RTO / Regn No: DL 1 C AA 1234"), false);
+  assert.equal(valid("rto", "DL14", "RTO / Regn No: DL14CAA1234"), false);
+  assert.equal(valid("rto", "DL14C", "RTO: DL14CAA1234"), false);
+  assert.equal(valid("rto", "DL14C", "| RTO Code | DL 14C |"), true);
 });
 
 test("a synthetic PDF uses its rendered image cache or fails closed with zero network calls", async (t) => {

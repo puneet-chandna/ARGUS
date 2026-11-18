@@ -31,8 +31,8 @@ export function verifiedOcr(report: Report) {
 export function rebindExtraction(extraction: Extraction, filename: string): Extraction {
   return {
     ...extraction, filename,
-    clarifications: extraction.clarifications.map(confirmation => ({ ...confirmation, file: filename })),
-    fields: Object.fromEntries(Object.entries(extraction.fields).map(([field, decision]) => [
+    clarifications: extraction.clarifications.filter(confirmation => confirmation.page).map(confirmation => ({ ...confirmation, file: filename })),
+    fields: Object.fromEntries(Object.entries(extraction.fields).filter(([, decision]) => !decision.confirmation || decision.confirmation.page).map(([field, decision]) => [
       field, {
         ...decision, evidence: decision.evidence.map(source => ({ ...source, file: filename })),
         ...(decision.confirmation && { confirmation: { ...decision.confirmation, file: filename } }),

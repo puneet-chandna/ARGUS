@@ -1,85 +1,148 @@
 <div align="center">
-  <img src="app/argus-monogram.svg" alt="" width="84" height="84" />
-  <h1>Argus</h1>
-  <p><strong>Motor policy brokerage, with the evidence behind every decision.</strong></p>
-  <p>Argus (Auditable Rate Grid Understanding System): the hundred-eyed agent that reads motor policies and resolves brokerage commission rates, citing the exact grid cell behind every answer.</p>
-  
-  <p>
-    <a href="#sample-results">Sample results</a> ·
-    <a href="#run-locally">Run locally</a> ·
-    <a href="#verify">Verify</a> ·
-    <a href="#deploy-to-render">Deploy</a>
-  </p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/argus-banner-dark.svg">
+  <img src="assets/argus-banner-light.svg" alt="Argus. Reads the policy. Finds the rate. Shows the cell." width="100%">
+</picture>
+
+<br>
+
+[![Live app](https://img.shields.io/badge/Live%20app-open-1FA8A0?style=flat-square&labelColor=08242B)](https://argus.puneetchandna.com/)
+[![Vaatun challenge](https://img.shields.io/badge/Vaatun-Insurance%20Rater%20Agent%20Challenge-0F5C6E?style=flat-square&labelColor=08242B)](https://solvetojoin.vaatun.com)
+
+**Argus reads a motor policy PDF. It finds the commission rate in the insurer's rate card. It shows the exact cell it used.**
+
+[Try it](#try-it) · [How it works](#how-it-works) · [Sample results](#sample-results) · [Data and storage](#data-and-storage)
+
+<img src="docs/assets/hero.gif" alt="A user uploads a policy PDF. Argus reads it and shows the commission rate with its source cell." width="900">
+
 </div>
 
-Upload a motor insurance PDF to look up **own-damage (OD)** and **third-party (TP)** brokerage percentages. Argus shows the policy pages, rate-card coordinates, confidence, and the steps behind each rate or refusal. Reviewers can resolve disagreements against the original page and reopen both the PDF and result from private history.
+<br>
 
-## Sample results
+- **Cited.** Every rate links to a source cell in the rate card.
+- **Honest.** If the evidence is not enough, Argus says "cannot determine".
+- **Fast.** A PDF that Argus has read before returns at once.
 
-These decision traces replay source-reviewed facts through the same rating engine the app uses. [Official challenge and starter bundle](https://solvetojoin.vaatun.com/)
+## Try it
 
-| Policy and trace | OD | TP | Key evidence |
-| --- | --- | --- | --- |
-| [Go Digit · Stand-alone TP](submission/pvt-car-satp-go-digit.json) | Inapplicable | **29.5%** | RTO cluster and fuel/engine band select the SATP row. |
-| [HDFC ERGO · Comprehensive](submission/pvt-car-comprehensive-hdfc-ergo.json) | Ambiguous | Unsupported | Zone 2 is established. OD needs verified fuel and eligible GWP. |
-| [Reliance · Comprehensive](submission/pvt-car-comprehensive-reliance.json) | Ambiguous | Unsupported | The mapped zone, vehicle segment, and under-1,000 cc footnote are traced. Policy inception predates the grid. |
-| [Tata AIG · Stand-alone TP](submission/pvt-car-satp-tata-aig.json) | Inapplicable | **38% base** | The policy’s printed RTO location matches the DELHI column. All seven CNG renewal rows agree. |
+Open the live app: **<https://argus.puneetchandna.com/>**
+
+Sign in and upload a synthetic or de-identified policy PDF. See [local setup](#run-locally) and [deployment](#deploy-to-render).
+
+## What Argus does
+
+A motor policy PDF lists facts. Examples are the insurer, the vehicle, the fuel type and the registration area.
+
+An insurer publishes a rate card. The rate card maps those facts to a commission rate.
+
+Argus reads the policy and applies the rate card. It returns two rates: Own Damage (OD) and Third Party (TP). Each rate has a trace. The trace lists every step and its source.
+
+### 01 · Every rate has a source
+
+Argus cites the policy page for each fact. It cites the cells that map those facts to rate-card terms. It cites the cell that holds the rate. You can check each step.
+
+<img src="docs/assets/01-result.png" alt="A result screen. It shows the OD and TP rates, and the policy page and rate-card cells that support them." width="100%">
+
+### 02 · "Cannot determine" is a valid answer
+
+If the rate card cannot establish a rate, Argus marks the run as Unsupported and shows the blocker. The screenshot shows an archived Tata AIG decision. The current rate lookup resolves this sample at 38% base TP.
+
+<img src="docs/assets/02-unsupported.png" alt="A result screen with the Unsupported state and the reason." width="100%">
+
+### 03 · Live progress for new PDFs
+
+A PDF that Argus has read before returns at once. A new PDF needs live OCR. This step can take minutes. Argus shows each page as it reads it.
+
+<img src="docs/assets/03-analyzing.gif" alt="Argus reads a new four-page policy with live OCR, shows page-by-page progress, and opens the result. Long waits are cut." width="100%">
+
+### 04 · You approve external OCR
+
+Argus sends a PDF to a cloud OCR service only after you approve it. Approve each PDF. Use synthetic or de-identified PDFs only.
+
+<img src="docs/assets/04-consent.png" alt="The upload screen with the OCR approval checkbox." width="100%">
+
+## Run states
+
+| State | Meaning | What to do |
+| --- | --- | --- |
+| **Resolved** | Argus found every applicable rate. Each step has a source. | Read the trace. Use the rate. |
+| **Needs review** | The evidence is unclear or conflicts. | Check the cited sources. |
+| **Unsupported** | The rate card has no safe rule for this policy. | Do not use a rate. |
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A["Policy PDF"] --> B["Two OCR readings"]
-    B --> C["Verified facts"]
-    B --> D["Reviewer checks conflicts"]
-    D --> C
-    C --> E["Deterministic rate lookup"]
-    F["Versioned rate cards"] --> E
-    E --> G["Decision and citations"]
+    A["Policy PDF"] --> B{"Read before?"}
+    B -- "Yes" --> D["Use cached text"]
+    B -- "No" --> C["Live OCR (you approve)"]
+    C --> D
+    D --> E["Extract policy facts"]
+    E --> F["Map facts to rate-card terms"]
+    F --> G["Look up OD and TP rates"]
+    G --> H["Apply exceptions"]
+    H --> I{"Enough evidence?"}
+    I -- "Yes" --> J["Resolved"]
+    I -- "Unclear" --> K["Needs review"]
+    I -- "No rule" --> L["Unsupported"]
 ```
 
-- **Evidence.** Poppler renders pages for two independent OCR readers. A reviewer can pick a reading or enter a correction and cite its page. The TypeScript engine cites the original grid cells or PDF rows and leaves a rate open when the available evidence cannot establish it.
-- **Private history.** Supabase Storage keeps the original PDF. Postgres keeps the result, evidence, and job state. The Next.js API checks ownership before serving either artifact. Both survive new sessions and container replacement. Interrupted jobs can resume from the saved PDF once their lease expires.
-- **Reuse.** A repeat upload can reuse verified OCR and saved corrections for the same reviewer and PDF bytes. A reviewer can recalculate from saved facts without making another OCR request.
+Rules that Argus follows:
 
+- The rate card is the authority. Argus never infers a rate through a missing, declined or conflicting rule.
+- Argus rates OD and TP only.
+- A stand-alone TP policy has no OD rate. Argus shows OD as not applicable. It never shows zero.
 
+The Next.js API stores uploads and renders pages with Poppler for two independent OCR readers. The TypeScript rate engine uses verified policy facts and versioned tables with the original workbook cells or PDF rows. A reviewer can correct policy readings against the original PDF. HDFC ERGO’s eligible GWP requires a brokerage record.
 
-<details>
-<summary>Configure email signup or live OCR</summary>
+Independent OCR increases latency on new PDFs. The app reuses eligible readings for identical PDF bytes within the same reviewer account and rerates against the current grids. Conflicting readings or missing rating inputs lead to review. A published coverage gap leads to Unsupported. An interrupted job can resume from its saved PDF after its lease expires.
 
-For public signup, enable it in Supabase Auth, set **Site URL** to your app origin and allow the exact `<origin>/auth/confirm` redirect. Set up [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp) for public confirmation emails.
+## Sample results
 
-Set `NVIDIA_API_KEY` for free NVIDIA-hosted OCR. Nemotron Super VL reads each page independently of the second reader. Argus tries Sarvam Vision for the second reading, then Gemini 3.8 Flash, then NVIDIA-hosted Mistral Large 4. Add `SARVAM_API_KEY` and `GEMINI_API_KEY` to use the first two routes. Use a Gemini project on Google’s free tier with billing disabled.
+These four traces replay source-reviewed facts from the supplied policies through the app’s rating engine.
 
-Sarvam runs first when configured and uses the account’s own credits. Argus tries the next reader when Sarvam rejects a request or otherwise fails. [The fallback migration](supabase/migrations/202611150005_ocr_fallback.sql) caps Gemini at 100 Argus requests per day and resets its counter at midnight Pacific time. Only Gemini uses an Argus request budget. Uploaders must authorize cloud processing for each synthetic or de-identified PDF. Set `ARGUS_OCR_CACHE_DIR` to replay compatible private reads.
+| Policy | Result | Trace |
+| --- | --- | --- |
+| HDFC ERGO, comprehensive | Needs review. Zone 2 OD needs eligible GWP. Package TP is unsupported. | [JSON](submission/pvt-car-comprehensive-hdfc-ergo.json) |
+| Go Digit, stand-alone TP | Resolved. TP 29.5%. | [JSON](submission/pvt-car-satp-go-digit.json) |
+| Reliance, comprehensive | Needs review. The workbook does not establish OD applicability on the policy start date. Package TP is unsupported. | [JSON](submission/pvt-car-comprehensive-reliance.json) |
+| Tata AIG, stand-alone TP | Resolved. Base TP 38%. | [JSON](submission/pvt-car-satp-tata-aig.json) |
 
-</details>
+## Run locally
 
+Install Node.js 24 or later, Poppler, Docker, and the Supabase CLI. Extract the [official starter bundle](https://solvetojoin.vaatun.com/downloads/insurance-rater-agent-challenge.zip) into `vaatun-starter-bundle/` alongside the pinned manifest.
+
+```bash
+npm ci
+npm run verify:corpus
+cp .env.example .env.local
+supabase_dir=$(mktemp -d)
+supabase --workdir "$supabase_dir" init
+cp -r supabase/migrations "$supabase_dir/supabase/"
+supabase --workdir "$supabase_dir" start
+```
+
+In `.env.local`, set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` from the local project's API URL, publishable key, and secret key. The CLI's `status --output env` also reports `API_URL`, `ANON_KEY`, and `SERVICE_ROLE_KEY`. Start Argus with `npm run dev` and open <http://localhost:3000>. Set OCR keys as described in [.env.example](.env.example) only when the provider access is free and the sample is authorized.
+
+Run `npm test`, `npm run typecheck`, and `npm run build` for local checks. The [CI workflow](.github/workflows/checks.yml) shows how to run the integration and Playwright suites against local Supabase and `npm run start`.
 
 ## Deploy to Render
 
-Open [Deploy to Render](https://render.com/deploy?repo=https://github.com/puneet-chandna/ARGUS), connect GitHub, and enter `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY`. The [Blueprint](render.yaml) creates a Free Docker web service with `/api/health` and deploys gated on GitHub checks. Render supplies the default HTTPS origin. Set `ARGUS_PUBLIC_ORIGIN` if you use a custom domain. [Render Free limits](https://render.com/docs/free)
+Apply the [Supabase migrations](supabase/migrations) to the hosted project. Create a Render Blueprint using [render.yaml](render.yaml) and configure its three Supabase variables. Set `ARGUS_PUBLIC_ORIGIN` to the public HTTPS origin when using a custom domain. For public signup, configure the Supabase Auth site URL, the exact `<origin>/auth/confirm` redirect, and SMTP.
 
-**Hosted acceptance check.** Upload an authorized policy outside the four samples. Open its result and original PDF from history after refreshing, reopening the browser, signing out and back in, restarting the app, and redeploying. Compare the PDF SHA-256 before and after.
+To check the deployment, upload an authorized synthetic PDF outside the four samples. Reopen its result and original PDF after refresh, browser reopen, sign-out and sign-in, app restart, and redeployment. Compare the original file’s SHA-256 before and after.
 
-## Reviewer profile and retention
+## Record the README demo
 
-Apply all Supabase migrations before deploying this version. The profile and preferences belong to the signed-in reviewer. Audit records are created by Auth, database transitions and successful exports; historical activity is not backfilled. An approval records consent, while an analysis records whether a cloud reader was contacted. The session list uses Supabase's device metadata. Session revocation stops refresh; an already issued access token may remain valid until it expires.
+Start a local Supabase project with the Argus migrations and export `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` for that project. Use a checkout with Git history and the official starter bundle unpacked. Install Poppler, FFmpeg with `ffprobe`, and Playwright Chromium (`npx playwright install chromium`). The capture uses `gifsicle` if a GIF exceeds its size limit.
 
-The default is to keep runs and original PDFs until deleted. With **Delete original PDFs after analysis** enabled, Argus keeps the original through any required review. After cleanup, the structured result and rate evidence remain in history. Maintenance can retry pending removals.
+Export `NVIDIA_API_KEY` for the free NVIDIA Build endpoints. For the second reader, export `SARVAM_API_KEY` if the account has verified free credits. Otherwise Argus uses NVIDIA-hosted Mistral Large 4. Run `npm run capture:readme` to build the production app and record all assets with a disposable demo account. The hero uses a cached result. The analysis clip runs live OCR on all four pages of the official Go Digit sample and cuts the long waits. Use `npm run capture:readme -- --live-only` to refresh just that clip.
 
-To enable timed retention, set `ARGUS_MAINTENANCE_SECRET` to a random secret of at least 32 characters and configure an external scheduler to send `POST /api/maintenance` with `Authorization: Bearer <secret>` at least daily. Store the secret in the scheduler's secret manager. Monitor non-2xx responses and retry them; each call handles up to 100 expired runs and 100 pending PDF removals. Do not configure the secret without an active scheduler. With no scheduler, timed retention controls are unavailable.
+## Data and storage
 
-Personal exports include account details, the profile photo if set, preferences, analyses and activity in a ZIP of JSON and CSV files. They do not include original PDFs. Account deletion removes the local Auth account and reconciles the private PDF objects before deleting identity data. Action email notifications, geographic session lookup and two-factor enrollment are unavailable in the standard Argus configuration.
+Argus saves originals in a private Supabase Storage bucket and saves results, evidence, and job state in Supabase Postgres. The API checks ownership before serving either artifact. Supabase keeps both independently of the browser and app container, so saved runs can reopen after sign-in, app restart, and redeployment. If automatic original deletion is enabled, Argus retains the PDF through required review and preserves the structured analysis after deletion.
 
-When using Supabase Cron, enable `pg_cron` and `pg_net` and provision the job with [the retention setup SQL](supabase/retention-schedule.sql). The database generates the bearer and keeps it in a private schema. Use the actual HTTPS origin of your Argus deployment. Disable the schedule and clear its configuration together to turn off timed retention.
+## Credits
 
-### Reading Eye development
-
-<img src="assets/argus-logo-4-pixel-iris-animated.svg" alt="Argus pixel iris artwork" width="80" />
-
-Apply `supabase/migrations/202611170003_reading_eye.sql` before running the updated app. The upload starts the server worker after the response; reopening a processing run reattaches to its persisted progress. A cancelled run keeps its original PDF. The run revision prevents a cancelled worker from committing a late result. The reviewer-owned status response is available at `GET /api/runs/:id?progress=1`; cancellation uses `POST /api/runs/:id/cancel`.
-
-Set `ARGUS_FAKE_SLOW=1` (or `miss`, `miss-fail`, `partial`, or `cache-hit`) with `npm run dev` and a disposable Supabase workspace. These modes do not call OCR providers. The slow page takes 25 seconds. Production ignores this flag.
-
-Preflight sends only the file's SHA-256. Production reuses an eligible whole-file extraction from the signed-in reviewer's cache, then rerates it against the current grids. A miss does not reveal the page count before upload. Typical time is computed once the count is known, from the reviewer's last 50 successful live observations (five minimum). Partial hits are simulated only.
+Built by [Puneet Chandna](https://puneetchandna.com) for the [Vaatun Insurance Rater Agent Challenge](https://solvetojoin.vaatun.com).

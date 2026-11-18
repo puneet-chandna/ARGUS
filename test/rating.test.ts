@@ -100,6 +100,27 @@ test("HDFC applies the geographic, GWP and fuel/NCB rows without treating OD pre
     assert.equal(outcome.od.status, status, JSON.stringify(change));
     assert.equal(outcome.od.rate, percentage, JSON.stringify(change));
   }
+  assert.deepEqual(rate({ ...hdfc, fuel: "", eligible_private_car_gwp: "" }).review_fields, ["eligible_private_car_gwp"]);
+  assert.equal(rate({ ...hdfc, fuel: "", eligible_private_car_gwp: "11869" }).od.rate, "17.5");
+  assert.deepEqual(rate({ ...hdfc, fuel: "", current_ncb: "0" }).review_fields, ["fuel"]);
+  assert.deepEqual(rate({ ...hdfc, fuel: "", policy_type: "Private Car SAOD" }).review_fields, ["fuel"]);
+  assert.deepEqual(rate({ ...hdfc, rto: "", fuel: "" }).review_fields, ["rto"]);
+});
+
+test("HDFC previews only a unique, cited OD rate without treating a policy premium as verified GWP", () => {
+  const input = { ...hdfc, fuel: "", eligible_private_car_gwp: "", net_od_premium: "8053", net_tp_premium: "3816" };
+  const result = rate(input);
+  assert.deepEqual([result.od.rate, result.tp.status, result.status], [null, "unsupported", "ambiguous"]);
+  assert.deepEqual([result.gwp_preview?.amount, result.gwp_preview?.rate, result.gwp_preview?.zone], ["11869", "17.5", 2]);
+  assert.match(result.gwp_preview?.sources[0].row ?? "", /Zone 2, >10-50k/);
+  const other = rate({ ...input, rto: "MH12", net_premium: "75,000" });
+  assert.deepEqual([other.gwp_preview?.amount, other.gwp_preview?.rate, other.gwp_preview?.zone], ["75000", "21", 1]);
+  const ambiguousInputs: Record<string, string>[] = [
+    { net_tp_premium: "" }, { current_ncb: "" }, { net_premium: "10000" }, { eligible_private_car_gwp: "11869" },
+  ];
+  for (const changes of ambiguousInputs) {
+    assert.equal(rate({ ...input, ...changes }).gwp_preview, undefined);
+  }
 });
 
 test("Reliance requires dated applicability and checks the CC threshold and add-ons", () => {
@@ -162,7 +183,10 @@ test("All four fixture traces replay known source-reviewed facts against the ori
     const result = rate(facts);
     assert.deepEqual([result.status, result.od.rate, result.tp.rate, result.business_type], [status, od, tp, businessType], name);
     for (const [key, value] of Object.entries(result)) {
-      if (key !== "trace") assert.deepEqual(fixture[key], value, `${name}: ${key}`);
+      if (key === "gwp_preview") {
+        assert.deepEqual({ ...fixture[key], sources: fixture[key].sources.filter((source: { file: string }) => source.file !== fixture.filename) },
+          value, `${name}: ${key}`);
+      } else if (key !== "trace") assert.deepEqual(fixture[key], value, `${name}: ${key}`);
     }
     assert.deepEqual(fixture.trace.slice(-result.trace.length).map((step: (typeof result.trace)[number]) => ({
       ...step, sources: step.sources.filter(source => source.file !== fixture.filename),

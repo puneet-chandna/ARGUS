@@ -238,6 +238,8 @@ dialog.review-desk[open] { display: flex; flex-direction: column; }
 .review-field-picker { width: 100%; margin-bottom: 20px; }
 .run-review h3 { margin-bottom: 4px; font-size: 1.125rem; }
 .run-review p { color: var(--muted); font-size: .875rem; }
+.gwp-note { display: grid; gap: 6px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--report-inset); }
+.run-review .gwp-note p { color: var(--ink); }
 .review-readings { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 8px; margin: 0; }
 .review-readings > section { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--report-inset); }
 .review-readings h4 { margin: 0 0 6px; font-size: .875rem; color: var(--muted); }

@@ -6,6 +6,7 @@ import { tata } from "./tata.ts";
 import { component, policyCoverage, tidy, vehicleBodyStyle } from "./types.ts";
 import type { Facts, Parts, RatingResult } from "./types.ts";
 export type { Facts, RatingResult, Source, TraceStep } from "./types.ts";
+export const RATE_CARD_VERSION = data.version;
 
 const engines = { godigit: digit, "hdfc-ergo": hdfc, "reliance-indusind": reliance, "tata-aig": tata };
 const aliases: Record<keyof typeof engines, string[]> = {
@@ -65,7 +66,8 @@ export function rate(facts: Facts): RatingResult {
   const states = [parts.od.status, parts.tp.status];
   const status = states.includes("ambiguous") ? "ambiguous" : states.includes("unsupported") ? "unsupported" : "resolved";
   return {
-    ...parts, status, rule_version: insurer === "tata-aig" ? `${data.version}-tata-rto-v2` : data.version,
+    ...parts, status, rule_version: insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v2` :
+      insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v3` : RATE_CARD_VERSION,
     business_type: businessType || null,
     confidence: status === "ambiguous" ? { level: "low", reason: "At least one applicable rate is undetermined." } :
       { level: "high", reason: "The supplied source evidence establishes the rate or coverage decision." },

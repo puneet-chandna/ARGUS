@@ -2,7 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { HttpError } from "./http.ts";
 import { conflictFields, requiredReviewFields } from "./review-fields.ts";
 import type { CacheCheck, RunProgress } from "./progress.ts";
-import { applyRating, type Report } from "./report.ts";
+import { applyRating, needsBrokerageGwp, type Report } from "./report.ts";
+import { RATE_CARD_VERSION } from "./rating/index.ts";
 import type { Extraction } from "./ingestion/index.ts";
 import { verifiedOcr, verifiedOcrProfile } from "./verified-ocr.ts";
 import { pdfObject, uuid } from "./upload.ts";
@@ -74,12 +75,18 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (!data) throw new HttpError(404, "Run not found.");
       return data;
     },
-    async refreshTataDecision(run: StoredRun) {
+    async refreshDecision(run: StoredRun) {
       const result = run.result;
-      if (run.deleting_at || run.status !== "complete" ||
-          result?.tp.reason !== "The workbook does not confirm which payout cluster covers the policy’s RTO.") return run;
+      if (run.deleting_at || run.status !== "complete" || !result) return run;
+      const legacyTata = result.tp.reason === "The workbook does not confirm which payout cluster covers the policy’s RTO.";
+      const legacyGwp = needsBrokerageGwp(result.fields.eligible_private_car_gwp);
+      const rerate = legacyTata || legacyGwp || [RATE_CARD_VERSION, `${RATE_CARD_VERSION}-hdfc-od-v2`].includes(result.rule_version);
+      const refreshed = rerate ? applyRating(result) : result;
+      const changed = legacyTata || legacyGwp || refreshed.rule_version !== result.rule_version;
+      const cancelCleanup = run.pdf_cleanup_pending && requiredReviewFields(refreshed).length > 0;
+      if (!changed && !cancelCleanup) return run;
       const { data, error } = await client.from(TABLE).update({
-        result: applyRating(result), revision: run.revision + 1,
+        ...(changed && { result: refreshed }), ...(cancelCleanup && { pdf_cleanup_pending: false }), revision: run.revision + 1,
       }).match({ ...owned(run.id), status: "complete", revision: run.revision })
         .is("deleting_at", null).select("*").maybeSingle<StoredRun>();
       if (error) throw error;
@@ -222,10 +229,14 @@ export function runStore(client: SupabaseClient, owner: string) {
     },
     async cleanupOriginal(id: string) {
       const identity = owned(id);
-      const pending = await client.from(TABLE).select("id").match({ ...identity, pdf_cleanup_pending: true, status: "complete" })
+      const pending = await client.from(TABLE).select("*").match({ ...identity, pdf_cleanup_pending: true, status: "complete" })
         .is("deleting_at", null).maybeSingle();
       if (pending.error) throw pending.error;
       if (!pending.data) return;
+      const current = await this.refreshDecision(pending.data);
+      // A concurrent update can leave the legacy decision in place after the refresh attempt.
+      if (!current.pdf_cleanup_pending || current.deleting_at || !current.result ||
+          requiredReviewFields(applyRating(current.result)).length) return;
       const { error: storageError } = await bucket.remove([pdfObject(owner, id)]);
       if (storageError) throw storageError;
       const { error } = await client.from(TABLE).update({ pdf_deleted_at: new Date().toISOString(), pdf_cleanup_pending: false })

@@ -1,4 +1,5 @@
-import { canonical, type Extraction, type Confirmation, type Evidence } from "./ingestion/index.ts";
+import { canonical, type Extraction, type Confirmation, type Evidence, type FieldDecision } from "./ingestion/index.ts";
+import { FIELDS } from "./ingestion/facts.ts";
 import { rate, type RatingResult } from "./rating/index.ts";
 import { vehicleBodyStyle } from "./rating/types.ts";
 import { HttpError } from "./http.ts";
@@ -6,11 +7,20 @@ import { confirmationError, conflictFields, requiredReviewFields, reviewFields }
 
 export type Report = Extraction & RatingResult & { rating_trace_start?: number };
 
+export function needsBrokerageGwp(fact?: FieldDecision) {
+  return fact?.value != null && (fact.status !== "confirmed_by_reviewer" ||
+    !fact.confirmation?.file.trim() || fact.confirmation.page !== undefined);
+}
+
 export function applyRating(extraction: Extraction): Report {
   const fields = { ...extraction.fields };
   const classification = fields.vehicle_class;
   if (classification?.value != null && vehicleBodyStyle(classification.value)) {
     fields.vehicle_class = { ...classification, value: null, status: "rejected", reason: "vehicle_body_style_only" };
+  }
+  const gwp = fields.eligible_private_car_gwp;
+  if (gwp && needsBrokerageGwp(gwp)) {
+    fields.eligible_private_car_gwp = { value: null, status: "needs_review", reason: "insufficient_agreement", evidence: gwp.evidence };
   }
   const facts: Record<string, string> = {};
   for (const [name, field] of Object.entries(fields)) {
@@ -40,39 +50,54 @@ export function applyRating(extraction: Extraction): Report {
     const sources = ["insurer", "previous_insurer", "business_type"].flatMap<Evidence | Confirmation>(policySources);
     trace.push({ step: `Business type: ${rated.business_type}`, sources });
   }
-  const confidence = extraction.clarifications.length
+  const confidence = Object.keys(facts).some(name => fields[name].status === "confirmed_by_reviewer")
     ? { ...rated.confidence, reason: `${rated.confidence.reason} Reviewer-confirmed evidence was used.` }
     : rated.confidence;
   const decisions = rated.trace.map(step => ({
     ...step, sources: [...step.sources, ...(step.policy_fields ?? []).flatMap<Evidence | Confirmation>(policySources)],
   }));
-  return { ...extraction, ...rated, fields, review_fields: rated.review_fields, confidence, rating_trace_start: trace.length, trace: [...trace, ...decisions] };
+  const preview = rated.gwp_preview;
+  const gwp_preview = preview && {
+    ...preview, sources: [...preview.sources, ...preview.policy_fields.flatMap(policySources)],
+  };
+  return { ...extraction, ...rated, fields, review_fields: rated.review_fields, gwp_preview, confidence,
+    rating_trace_start: trace.length, trace: [...trace, ...decisions] };
 }
 
 export function clarifyBatch(report: Report, inputs: unknown, pages: number): Report {
-  const allowed = reviewFields(report);
-  if (!Array.isArray(inputs) || !inputs.length || inputs.length > allowed.length) {
+  const allowed = new Set<string>(reviewFields(report));
+  if (!Array.isArray(inputs) || !inputs.length || inputs.length > FIELDS.length) {
     throw new HttpError(422, "Select policy facts to confirm.");
   }
   const fields = { ...report.fields };
   const clarifications = [...report.clarifications];
   const selected = new Set<string>();
   for (const input of inputs) {
-    const { field, value, page } = input ?? {};
+    const { field, value, page, source } = input ?? {};
     if (typeof field !== "string" ||
-        typeof value !== "string" || !value.trim() || [...value].length > 220 ||
-        typeof page !== "number" || !Number.isInteger(page) || page < 1 || page > pages) {
-      throw new HttpError(400, "Confirm a document value and cite its page.");
+        typeof value !== "string" || !value.trim() || [...value].length > 220) {
+      throw new HttpError(400, "Enter the value you verified.");
+    }
+    const external = field === "eligible_private_car_gwp";
+    if (external ? page !== undefined ||
+      typeof source !== "string" || !source.trim() || source.length > 220 || /\p{Cc}/u.test(source) :
+      source !== undefined || typeof page !== "number" || !Number.isInteger(page) || page < 1 || page > pages) {
+      throw new HttpError(400, "Cite the policy page or, for eligible GWP, identify the brokerage record.");
     }
     if (selected.has(field)) throw new HttpError(422, "Confirm each field only once.");
-    if (!allowed.some(name => name === field)) throw new HttpError(422, "This field is not awaiting review.");
+    if (!allowed.has(field)) {
+      const discovered = selected.size && requiredReviewFields(applyRating({ ...report, fields, clarifications })).includes(field);
+      if (!discovered) throw new HttpError(422, "This field is not awaiting review.");
+    }
     const error = confirmationError(field, value);
     if (error) throw new HttpError(422, error);
 
     selected.add(field);
     const normalized = canonical(field, value)!;
     const confirmation = {
-      field, raw: value, value: normalized, page, file: report.filename, type: "reviewer_confirmation" as const,
+      field, raw: value, value: normalized,
+      ...(external ? { file: source.trim() } : { file: report.filename, page }),
+      type: "reviewer_confirmation" as const,
     };
     const decision = fields[field] ?? { reason: "insufficient_agreement", evidence: [] };
     fields[field] = { ...decision, value: normalized, status: "confirmed_by_reviewer", confirmation };

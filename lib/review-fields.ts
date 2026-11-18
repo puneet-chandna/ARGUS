@@ -39,6 +39,7 @@ export function reviewFields(report: ReviewableReport) {
   if (report.status !== "ambiguous") return disputed;
   return [...new Set([...disputed, ...MANUAL_FIELDS.filter(field => {
     const fact = report.fields[field];
+    if (report.review_fields?.includes(field)) return true;
     if (field === "policy_type" && !policyCoverage(String(fact?.value ?? ""))) return true;
     return !fact || (fact.value == null && fact.status !== "confirmed_by_reviewer");
   })])];
@@ -47,7 +48,7 @@ export function reviewFields(report: ReviewableReport) {
 export function requiredReviewFields(report: ReviewableReport) {
   if (report.status !== "ambiguous") return [];
   const allowed = new Set<string>(reviewFields(report));
-  if (report.rule_version?.endsWith("-tata-rto-v2")) {
+  if (report.rule_version?.endsWith("-tata-rto-v2") || /-hdfc-od-v[23]$/.test(report.rule_version ?? "")) {
     return (report.review_fields ?? []).filter(field => allowed.has(field));
   }
   return [...new Set([...conflictFields(report), ...(report.review_fields ?? [])])].filter(field => allowed.has(field));

@@ -1,6 +1,7 @@
 # Local instructions, notes, caches, and secrets
 /AGENTS.md
-/docs/
+/docs/*
+!/docs/assets/
 /notes/
 /.local/
 .env

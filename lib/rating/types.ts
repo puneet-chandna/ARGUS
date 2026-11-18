@@ -8,7 +8,14 @@ export type Component = {
   status: Status | "inapplicable";
   reason: string;
 };
-export type Parts = { od: Component; tp: Component; trace: TraceStep[]; review_fields?: readonly string[] };
+export type GwpPreview = {
+  amount: string;
+  rate: string;
+  zone: number;
+  sources: Source[];
+  policy_fields: readonly string[];
+};
+export type Parts = { od: Component; tp: Component; trace: TraceStep[]; review_fields?: readonly string[]; gwp_preview?: GwpPreview };
 export type RatingResult = Parts & {
   status: Status;
   rule_version: string;
