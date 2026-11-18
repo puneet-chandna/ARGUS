@@ -23,15 +23,16 @@ export async function POST(request: Request) {
     ]);
     if (expired.error || pending.error) throw expired.error || pending.error;
     let failed = 0;
+    let removed = 0;
     for (const row of expired.data ?? []) {
-      try { await runStore(client, row.owner_id).remove(row.id); }
+      try { if (await runStore(client, row.owner_id).removeExpired(row.id)) removed++; }
       catch { failed++; }
     }
     for (const row of pending.data) {
       try { await runStore(client, row.owner_id).cleanupOriginal(row.id); }
       catch { failed++; }
     }
-    return json({ expired: expired.data?.length ?? 0, originals: pending.data.length, failed }, failed ? 503 : 200);
+    return json({ expired: removed, originals: pending.data.length, failed }, failed ? 503 : 200);
   } catch {
     return json({ error: "Maintenance could not complete. Retry the scheduled job." }, 503);
   }

@@ -30,6 +30,12 @@ export const rtoCode = (value = "") => value.toUpperCase().replace(/[\s-]+/g, ""
 export const validRto = (value: string) => /^[A-Z]{2}[0-9]{1,2}[A-Z]?$/.test(value);
 export const integer = (value = "") => /^\d{1,5}$/.test(value.trim()) ? Number(value) : null;
 
+export function policyStartDate(value = ""): string | null {
+  if (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : null;
+}
+
 export function component(
   status: Component["status"], reason: string, rate: string | null = null, applicable: boolean | null = status !== "inapplicable",
 ): Component {

@@ -5,7 +5,7 @@ import { EXTRACTION_VERSION, liveOcrStatus } from "./ingestion/providers.ts";
 import { estimateSeconds, type CacheCheck, type RunProgress, type Stage } from "./progress.ts";
 import { applyRating, type Report } from "./report.ts";
 import type { runStore, StoredRun } from "./runs.ts";
-import { checksum, requireConsent } from "./upload.ts";
+import { checksum } from "./upload.ts";
 import { rebindExtraction, reuseConfirmations } from "./verified-ocr.ts";
 
 type Store = ReturnType<typeof runStore>;
@@ -38,7 +38,6 @@ type CacheLookup = { check: CacheCheck; reusable: Extraction | null; reviewed: E
 export async function startAnalysis(store: Store, run: StoredRun, cached?: CacheLookup, startedAt = new Date().toISOString()): Promise<StoredRun> {
   if (run.status === "complete" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now())) return run;
   const lookup = cached ?? await lookupCache(store, run.checksum);
-  requireConsent(lookup.check.cache, run.allow_cloud);
   const claim = await store.claim(run.id);
   if (!claim) return store.get(run.id);
 

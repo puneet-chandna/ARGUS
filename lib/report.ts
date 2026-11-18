@@ -1,5 +1,6 @@
 import { canonical, type Extraction, type Confirmation, type Evidence, type FieldDecision } from "./ingestion/index.ts";
-import { FIELDS } from "./ingestion/facts.ts";
+import { FIELDS, grounded } from "./ingestion/facts.ts";
+import { EXTRACTION_VERSION } from "./ingestion/providers.ts";
 import { rate, type RatingResult } from "./rating/index.ts";
 import { vehicleBodyStyle } from "./rating/types.ts";
 import { HttpError } from "./http.ts";
@@ -21,6 +22,16 @@ export function applyRating(extraction: Extraction): Report {
   const gwp = fields.eligible_private_car_gwp;
   if (gwp && needsBrokerageGwp(gwp)) {
     fields.eligible_private_car_gwp = { value: null, status: "needs_review", reason: "insufficient_agreement", evidence: gwp.evidence };
+  }
+  const ncb = fields.current_ncb;
+  if (extraction.extraction_version !== EXTRACTION_VERSION && ncb?.status === "accepted" && ncb.value !== null) {
+    const ocr = ncb.evidence.filter(source => source.reader);
+    const readers = new Set(ocr.filter(source => source.quote && grounded({
+      field: "current_ncb", value: ncb.value!, quote: source.quote, box: null,
+    }, source.quote)).map(source => source.reader));
+    if (ocr.length && readers.size < 2) {
+      fields.current_ncb = { ...ncb, value: null, status: "needs_review", reason: "insufficient_agreement" };
+    }
   }
   const facts: Record<string, string> = {};
   for (const [name, field] of Object.entries(fields)) {

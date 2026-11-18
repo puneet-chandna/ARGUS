@@ -38,6 +38,8 @@ export type StoredRun = {
 const TABLE = "argus_runs";
 const BUCKET = "argus-policy-pdfs";
 const summary = "id,filename,display_name,pinned,deleting_at,checksum,status,error,revision,created_at,lease_until,progress,analysis_mode,duration_ms,decision:result->>status";
+type UploadIdentity = { filename: string; digest: string; allowCloud: boolean };
+export type HistoryCursor = { pinned: boolean; createdAt: string; id: string };
 
 export function present(run: StoredRun, includeResult = true) {
   const { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, result, lease_until, progress, analysis_mode, ocr_mode, cache_result, duration_ms, pdf_deleted_at, pdf_cleanup_pending } = run;
@@ -60,13 +62,19 @@ export function runStore(client: SupabaseClient, owner: string) {
   }
 
   return {
-    async list() {
-      const { data, error } = await client.from(TABLE).select(summary).eq("owner_id", owner)
-        .neq("status", "uploading")
-        .or("analysis_mode.is.null,analysis_mode.neq.instant,status.in.(complete,failed,cancelled)")
-        .order("pinned", { ascending: false }).order("created_at", { ascending: false }).limit(100);
+    async list(after?: HistoryCursor) {
+      const { data, error } = await client.rpc("argus_run_history", {
+        reviewer_id: owner, after_pinned: after?.pinned ?? null,
+        after_created_at: after?.createdAt ?? null, after_id: after?.id ?? null,
+      }).select(summary).order("pinned", { ascending: false })
+        .order("created_at", { ascending: false }).order("id", { ascending: false });
       if (error) throw error;
-      return data;
+      if (!Array.isArray(data)) throw new Error("Invalid saved runs response.");
+      const runs = data.slice(0, 100);
+      const last = runs.at(-1);
+      const nextCursor = data.length > runs.length && last
+        ? [last.pinned ? "1" : "0", last.created_at, last.id].join("|") : null;
+      return { runs, nextCursor };
     },
     async get(id: string): Promise<StoredRun> {
       const { data, error } = await client.from(TABLE).select("*").match(owned(id))
@@ -80,7 +88,8 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (run.deleting_at || run.status !== "complete" || !result) return run;
       const legacyTata = result.tp.reason === "The workbook does not confirm which payout cluster covers the policy’s RTO.";
       const legacyGwp = needsBrokerageGwp(result.fields.eligible_private_car_gwp);
-      const rerate = legacyTata || legacyGwp || [RATE_CARD_VERSION, `${RATE_CARD_VERSION}-hdfc-od-v2`].includes(result.rule_version);
+      const rerate = legacyTata || legacyGwp ||
+        [RATE_CARD_VERSION, `${RATE_CARD_VERSION}-hdfc-od-v2`, `${RATE_CARD_VERSION}-hdfc-od-v3`].includes(result.rule_version);
       const refreshed = rerate ? applyRating(result) : result;
       const changed = legacyTata || legacyGwp || refreshed.rule_version !== result.rule_version;
       const cancelCleanup = run.pdf_cleanup_pending && requiredReviewFields(refreshed).length > 0;
@@ -92,7 +101,19 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (error) throw error;
       return data ?? this.get(run.id);
     },
-    async upload(input: { filename: string; bytes: Buffer; digest: string; allowCloud: boolean }, key: string, pages_total: number, cache_result: CacheCheck["cache"]) {
+    async findUpload(input: UploadIdentity, key: string) {
+      const { data: run, error } = await client.from(TABLE).select("*").match({
+        owner_id: owner, upload_key: key,
+      }).maybeSingle<StoredRun>();
+      if (error) throw error;
+      if (!run) return null;
+      if (run.checksum !== input.digest || run.allow_cloud !== input.allowCloud || run.filename !== input.filename) {
+        throw new HttpError(409, "This upload key already belongs to a different request.");
+      }
+      if (run.deleting_at) throw new HttpError(409, "This run is being deleted.");
+      return run;
+    },
+    async upload(input: UploadIdentity & { bytes: Buffer }, key: string, pages_total: number, cache_result: CacheCheck["cache"]) {
       const entry = {
         owner_id: owner, upload_key: key, filename: input.filename, size_bytes: input.bytes.length,
         checksum: input.digest, allow_cloud: input.allowCloud, pages_total, cache_result,
@@ -103,15 +124,8 @@ export function runStore(client: SupabaseClient, owner: string) {
       });
       if (insert.error) throw insert.error;
 
-      const existing = await client.from(TABLE).select("*").match({
-        owner_id: owner, upload_key: key,
-      }).single<StoredRun>();
-      if (existing.error) throw existing.error;
-      const run = existing.data;
-      if (run.checksum !== input.digest || run.allow_cloud !== input.allowCloud || run.filename !== input.filename) {
-        throw new HttpError(409, "This upload key already belongs to a different request.");
-      }
-      if (run.deleting_at) throw new HttpError(409, "This run is being deleted.");
+      const run = await this.findUpload(input, key);
+      if (!run) throw new HttpError(409, "This upload is no longer available. Choose the PDF again.");
       if (run.status !== "uploading") return run;
       // Retried writes use the same owner, object key, and verified bytes.
       const stored = await bucket.upload(pdfObject(owner, run.id), input.bytes, {
@@ -288,6 +302,14 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (storageError) throw new HttpError(503, "The original PDF could not be removed. Retry deletion.");
       const { error } = await client.rpc("argus_finish_delete", { run_id: id, reviewer_id: owner });
       if (error) throw new HttpError(503, "The deletion could not finish. Retry deletion.");
+    },
+    async removeExpired(id: string) {
+      const { id: runId } = owned(id);
+      const { data, error } = await client.rpc("argus_mark_retention_delete", { run_id: runId, reviewer_id: owner });
+      if (error) throw error;
+      if (!data) return false;
+      await this.remove(id);
+      return true;
     },
     async revise(current: StoredRun, result: Report) {
       const deleteOriginal = await wantsOriginalDeleted(result);

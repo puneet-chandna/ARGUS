@@ -9,6 +9,7 @@ import { checksum, pdfObject } from "../../lib/upload.ts";
 import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
 import { applyRating } from "../../lib/report.ts";
 import { runStore } from "../../lib/runs.ts";
+import { verifiedOcrProfile } from "../../lib/verified-ocr.ts";
 
 const pdfFile = new URL("../../vaatun-starter-bundle/sample-policies/pvt-car-satp-go-digit.pdf", import.meta.url);
 
@@ -286,6 +287,69 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     assert.equal((await cacheRows()).data?.length, 1);
     assert.equal((await remove(`/api/runs/${duplicateId}`, owner, true)).status, 200);
     assert.deepEqual((await cacheRows()).data, []);
+
+    const retryKey = randomUUID();
+    assert.ifError((await supabase.from("argus_ocr_cache").insert({ owner_id: users[0], checksum: checksum(pdf),
+      profile: verifiedOcrProfile(), extraction: report, grounded_text: [] })).error);
+    const withoutConsent = () => request("/api/runs", owner, { method: "POST", headers: { "Idempotency-Key": retryKey },
+      body: form(pdf, "cached-retry.pdf", false) });
+    const originalResponse = await withoutConsent();
+    assert.equal(originalResponse.status, 201);
+    const { run: cachedRun } = await originalResponse.json();
+    originals.push({ owner: users[0], run: cachedRun.id });
+    assert.ifError((await supabase.from("argus_ocr_cache").delete().eq("owner_id", users[0])).error);
+    const retry = await withoutConsent();
+    assert.equal(retry.status, 201);
+    assert.equal((await retry.json()).run.id, cachedRun.id);
+
+    const staged = { owner_id: users[0], filename: "interrupted.pdf", size_bytes: pdf.length, checksum: checksum(pdf),
+      pages_total: pages, status: "uploading", analysis_mode: "instant", cache_result: "hit" };
+    const next = await supabase.from("argus_runs").insert({ ...staged, upload_key: randomUUID() }).select("id").single();
+    assert.ifError(next.error);
+    originals.push({ owner: users[0], run: next.data.id });
+    assert.ifError((await supabase.storage.from("argus-policy-pdfs").upload(pdfObject(users[0], next.data.id), pdf,
+      { contentType: "application/pdf" })).error);
+    const recoveredHistory = await (await request("/api/runs", owner)).json();
+    assert.equal(recoveredHistory.runs.find((item: { id: string }) => item.id === next.data.id)?.status, "queued");
+    assert.equal((await request(`/api/runs/${next.data.id}/pdf`, owner)).status, 200);
+    assert.ifError((await supabase.from("argus_runs").update({
+      status: "processing", lease_until: "2025-01-01T00:00:00Z",
+    }).eq("id", next.data.id)).error);
+    const expiredHistory = await (await request("/api/runs", owner)).json();
+    assert.ok(expiredHistory.runs.some((item: { id: string }) => item.id === next.data.id));
+    const recovered = await request(`/api/runs/${next.data.id}`, owner, { method: "POST" });
+    assert.equal(recovered.status, 202);
+    assert.equal((await completed(next.data.id, owner)).ocr_mode, "local");
+
+    const filler = Array.from({ length: 100 }, (_, i) => ({ ...staged, status: "queued", filename: `later-${i}.pdf`, upload_key: randomUUID() }));
+    assert.ifError((await supabase.from("argus_runs").insert(filler)).error);
+    const first = await (await request("/api/runs", owner)).json();
+    assert.equal(first.runs.length, 100);
+    assert.ok(first.nextCursor);
+    const second = await (await request(`/api/runs?after=${encodeURIComponent(first.nextCursor)}`, owner)).json();
+    assert.equal(second.runs.length, 2);
+    assert.equal(second.nextCursor, null);
+    assert.ok(second.runs.some((item: { id: string }) => item.id === cachedRun.id));
+
+    assert.ifError((await supabase.from("argus_runs").update({ created_at: "2025-01-01T00:00:00Z" }).eq("id", cachedRun.id)).error);
+    assert.ifError((await supabase.from("argus_user_preferences").upsert({ owner_id: users[0], retention_days: 30 })).error);
+    const scheduled = await supabase.rpc("argus_retention_candidates");
+    assert.ifError(scheduled.error);
+    assert.ok(scheduled.data.some((item: { id: string }) => item.id === cachedRun.id));
+    assert.ifError((await supabase.from("argus_user_preferences").update({ retention_days: null }).eq("owner_id", users[0])).error);
+    const store = runStore(supabase, users[0]);
+    assert.equal(await store.removeExpired(cachedRun.id), false);
+    assert.equal((await request(`/api/runs/${cachedRun.id}/pdf`, owner)).status, 200);
+    assert.ifError((await supabase.from("argus_user_preferences").update({ retention_days: 30 }).eq("owner_id", users[0])).error);
+    const marked = await supabase.rpc("argus_mark_retention_delete", { run_id: cachedRun.id, reviewer_id: users[0] });
+    assert.ifError(marked.error);
+    assert.equal(marked.data, true);
+    assert.ifError((await supabase.from("argus_user_preferences").update({ retention_days: null }).eq("owner_id", users[0])).error);
+    const interrupted = await supabase.rpc("argus_retention_candidates");
+    assert.ifError(interrupted.error);
+    assert.ok(interrupted.data.some((item: { id: string }) => item.id === cachedRun.id));
+    assert.equal(await store.removeExpired(cachedRun.id), true);
+    assert.equal((await request(`/api/runs/${cachedRun.id}/pdf`, owner)).status, 404);
   } finally {
     await supabase.storage.from("argus-policy-pdfs").remove(originals.map(({ owner, run }) => pdfObject(owner, run)));
     for (const user of users) {

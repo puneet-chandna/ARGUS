@@ -545,6 +545,25 @@
       ]
     },
     {
+      "step": "The policy starts 2026-03-29, on or after the grid’s effective date.",
+      "sources": [
+        {
+          "file": "Pvt Car New Grid Eff 1st Feb'25 (HDFC ergo) 1.pdf",
+          "page": 1,
+          "row": "Effective from 1st Feb’25 heading"
+        },
+        {
+          "file": "pvt-car-comprehensive-hdfc-ergo.pdf",
+          "page": 1,
+          "raw": "2026-03-29",
+          "method": "manual_source_verification"
+        }
+      ],
+      "policy_fields": [
+        "start_date"
+      ]
+    },
+    {
       "step": "Current NCB is 35%.",
       "sources": [
         {
@@ -585,7 +604,7 @@
     }
   ],
   "status": "ambiguous",
-  "rule_version": "ts1-5a79a3ea91c8efa6-hdfc-od-v3",
+  "rule_version": "ts1-5a79a3ea91c8efa6-hdfc-od-v4",
   "business_type": "rollover",
   "confidence": {
     "level": "low",

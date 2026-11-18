@@ -67,7 +67,8 @@ export function rate(facts: Facts): RatingResult {
   const status = states.includes("ambiguous") ? "ambiguous" : states.includes("unsupported") ? "unsupported" : "resolved";
   return {
     ...parts, status, rule_version: insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v2` :
-      insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v3` : RATE_CARD_VERSION,
+      insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v4` :
+      insurer === "godigit" ? `${RATE_CARD_VERSION}-digit-age-v2` : RATE_CARD_VERSION,
     business_type: businessType || null,
     confidence: status === "ambiguous" ? { level: "low", reason: "At least one applicable rate is undetermined." } :
       { level: "high", reason: "The supplied source evidence establishes the rate or coverage decision." },

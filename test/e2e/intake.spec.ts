@@ -106,6 +106,19 @@ function running(pagesDone: number, cachedPages: number[] = []) {
 const files = { name: "policy.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-test") };
 const empty = { runs: [], ocr: { live: "ready", cache: false } };
 
+test("older saved runs stay reachable when the loaded page has no matches", async ({ page }) => {
+  const older = { ...saved, id: id.replace(/1$/, "2"), filename: "older-policy.pdf" };
+  await page.route("**/api/session", route => route.fulfill({ json: { email: "reviewer@example.test" } }));
+  await page.route("**/api/runs", route => route.fulfill({ json: { ...empty, runs: [saved], nextCursor: "next" } }));
+  await page.route("**/api/runs?after=next", route => route.fulfill({ json: { runs: [older], nextCursor: null } }));
+  await page.goto("/workspace");
+  await page.getByRole("searchbox", { name: "Search saved runs" }).fill("older-policy");
+  await expect(page.getByText("No matches in the loaded runs.")).toBeVisible();
+  await page.getByRole("button", { name: "Load more saved runs" }).click();
+  await expect(page.locator(".history-item")).toContainText("older-policy.pdf");
+  await expect(page.getByRole("button", { name: "Load more saved runs" })).toHaveCount(0);
+});
+
 test("workspace refresh requests the session and run history once", async ({ page }) => {
   await page.route("**/api/session", route => route.fulfill({ json: { email: "reviewer@example.test" } }));
   await page.route("**/api/runs", route => route.fulfill({ json: empty }));

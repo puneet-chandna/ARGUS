@@ -1,14 +1,22 @@
 import data from "./cards.json" with { type: "json" };
-import { component, rtoCode, tidy, validRto } from "./types.ts";
+import { component, policyStartDate, rtoCode, tidy, validRto } from "./types.ts";
 import type { Facts, Parts, Status } from "./types.ts";
 
 type Geography = [number, string, string, 1 | 2];
 type LocalGeography = [string, string, string[], 1 | 2, 1 | 2];
 const states = data.hdfc.states as unknown as Partial<Record<string, Geography>>;
 const locals = data.hdfc.local as unknown as Partial<Record<string, LocalGeography>>;
-const normalizeLocation = (value = "") => tidy(value).replace(/\band\b/g, "").replace(/\s+/g, " ").trim();
+const normalizeLocation = (value = "") =>
+  tidy(value.normalize("NFKD").replace(/\p{M}/gu, "")).replace(/\band\b/g, "").replace(/\s+/g, " ").trim();
+const namedPlaces = [
+  ...Object.values(states).flatMap(state => state?.[2].split(" / ") ?? []),
+  ...Object.values(locals).flatMap(local => local ? [local[1], ...local[2]] : []),
+  "Kamrup",
+].map(normalizeLocation);
 const file = data.files["hdfc-ergo"].split("/").at(-1)!;
 const { rates, slabs } = data.hdfc;
+const effectiveDate = "2025-02-01";
+const effectiveHeading = "Effective from 1st Feb’25 heading";
 
 function decimal(value = "", prefix = /^(?:₹|INR)\s*/i): string | null {
   const number = value.trim().replace(prefix, "");
@@ -33,6 +41,14 @@ function packagePremium(policy: Facts) {
   const total = String(a + b).padStart(precision + 1, "0");
   const amount = precision ? total.slice(0, -precision) + "." + total.slice(-precision) : total;
   return { amount, fields: ["net_od_premium", "net_tp_premium"] };
+}
+
+function isRestOfState(raw: string, state: string) {
+  const compound = /^\s*([\p{L}]+(?:[ .'’-]+[\p{L}]+)*)\s*(?:,\s*([^,()]+)|\(([^,()]+)\))\s*$/u.exec(raw);
+  if (!compound || normalizeLocation(compound[2] ?? compound[3]) !== state ||
+      /\b(?:and|or|unknown|unspecified|other|not|unavailable|state|rto)\b/i.test(compound[1])) return false;
+  const place = normalizeLocation(compound[1]);
+  return place !== "" && !namedPlaces.some(name => ` ${place} `.includes(` ${name} `));
 }
 
 export function hdfc(policy: Facts): Parts {
@@ -60,9 +76,10 @@ export function hdfc(policy: Facts): Parts {
     cite(reason, 1, "Slab footnote, PVT CAR eligibility");
     return policy.vehicle_class ? finish("unsupported", reason) : finish("ambiguous", reason, null, ["vehicle_class"]);
   }
-  if (policy.start_date && policy.start_date < "2025-02-01") {
+  const startDate = policyStartDate(policy.start_date);
+  if (startDate && startDate < effectiveDate) {
     const reason = "The policy starts before the effective date of the supplied HDFC grid.";
-    cite(reason, 1, "Effective from 1st Feb’25 heading");
+    cite(reason, 1, effectiveHeading, ["start_date"]);
     return finish("unsupported", reason);
   }
   const rto = rtoCode(policy.rto);
@@ -76,13 +93,17 @@ export function hdfc(policy: Facts): Parts {
   const local = locals[state];
   if (local) {
     const [region, name, cities, cityZone, restZone] = local;
+    const stateName = normalizeLocation(name);
     const location = normalizeLocation(policy.rto_location);
-    if (!location || location === tidy(name)) {
+    const matches = (label: string) => location === label || location === `${label} ${stateName}`;
+    const matchesCity = cities.some(city => matches(normalizeLocation(city)));
+    const matchesRest = matches(`rest of ${stateName}`) || (state === "AS" && matches("kamrup")) ||
+      isRestOfState(policy.rto_location ?? "", stateName);
+    if (!matchesCity && !matchesRest) {
       const reason = `The ${name} row distinguishes RTO locations. A verified city or district is required to choose a zone.`;
       cite(reason, 1, `Geography, ${region} — ${name} (Zone-1 and Zone-2)`);
       return finish("ambiguous", reason, null, ["rto_location"]);
     }
-    const matchesCity = cities.some(city => location === normalizeLocation(city));
     geography = [1, region, name, matchesCity ? cityZone : restZone];
   }
   if (!geography) {
@@ -92,7 +113,8 @@ export function hdfc(policy: Facts): Parts {
     return finish("unsupported", reason);
   }
   const [page, region, name, zone] = geography;
-  cite(`Mapped RTO ${rto} through ${name} to Zone ${zone}.`, page, `Geography, ${region} — ${name} (Zone-${zone})`,
+  const geographyLabel = local ? `${policy.rto_location} in the ${name} row` : name;
+  cite(`Mapped RTO ${rto} through ${geographyLabel} to Zone ${zone}.`, page, `Geography, ${region} — ${name} (Zone-${zone})`,
     local ? ["rto", "rto_location"] : ["rto"]);
 
   const gwp = decimal(policy.eligible_private_car_gwp);
@@ -117,6 +139,12 @@ export function hdfc(policy: Facts): Parts {
     cite(`Eligible private-car GWP ₹${gwp} selects ${slabs[slab]}.`, 1, `Zone ${zone}, ${slabs[slab]} category and slab footnote`,
       ["eligible_private_car_gwp"]);
   }
+  if (!startDate) {
+    const reason = "Confirm the policy start date to establish whether the HDFC grid effective 1 February 2025 applies.";
+    cite(reason, 1, effectiveHeading);
+    return finish("ambiguous", reason, null, ["start_date"]);
+  }
+  cite(`The policy starts ${startDate}, on or after the grid’s effective date.`, 1, effectiveHeading, ["start_date"]);
 
   if (validNcb !== null && !newBusiness) {
     cite(`Current NCB is ${validNcb}%.`, 1, `Zone ${zone}, ${cover} NCB column headings`, ["current_ncb"]);

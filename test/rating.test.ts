@@ -14,6 +14,7 @@ const digit = {
 };
 const hdfc = {
   insurer: "HDFC ERGO", policy_type: "Private Car Comprehensive Policy",
+  start_date: "2025-02-01",
   rto: "HR26", eligible_private_car_gwp: "8053", net_od_premium: "8053", fuel: "diesel", current_ncb: "35",
 };
 const reliance = {
@@ -73,6 +74,38 @@ test("Digit handles explicit zero, literal edges, missing facts and declines", (
   }
 });
 
+test("Digit derives and cites a conservative age range for age bands and restrictions", () => {
+  const andaman = { ...digit, rto: "AN01", fuel: "diesel", engine_cc: "1498", start_date: "2026-03-25" };
+  const young = rate({ ...andaman, manufacture_year: "2019" });
+  assert.equal(young.tp.rate, "20");
+  assert.ok(young.trace.some(step => /6–7/.test(step.step) &&
+    step.policy_fields?.includes("manufacture_year") && step.policy_fields.includes("start_date")));
+  assert.equal(rate({ ...andaman, registration_year: "2014" }).tp.rate, "46");
+  const uncertainYears: Record<string, string>[] = [{ registration_year: "2015" }, { registration_year: "2016" },
+    { registration_year: "2019" },
+    { manufacture_year: "2014", registration_year: "2019" }];
+  for (const years of uncertainYears) {
+    const outcome = rate({ ...andaman, ...years });
+    assert.deepEqual([outcome.tp.status, outcome.tp.rate, outcome.review_fields], ["ambiguous", null, ["vehicle_age"]]);
+  }
+  const contradictory = rate({ ...andaman, manufacture_year: "2019", registration_year: "2014" });
+  assert.deepEqual([contradictory.tp.status, contradictory.tp.rate, contradictory.review_fields],
+    ["ambiguous", null, ["start_date", "manufacture_year", "registration_year"]]);
+  const consistent = { ...andaman, manufacture_year: "2019", registration_year: "2019" };
+  assert.equal(rate({ ...consistent, vehicle_age: "7" }).tp.rate, "20");
+  const wrongAge = rate({ ...consistent, vehicle_age: "12" });
+  assert.equal(wrongAge.tp.status, "ambiguous");
+  assert.equal(wrongAge.tp.rate, null);
+  assert.ok(wrongAge.trace.some(step => step.policy_fields?.includes("vehicle_age") && step.policy_fields.includes("manufacture_year")));
+  assert.equal(rate({ ...andaman, start_date: "2026-12-31", registration_year: "2015" }).tp.rate, "46");
+  const haryana = { ...digit, rto: "HR04", engine_cc: "1197", start_date: andaman.start_date };
+  assert.equal(rate({ ...haryana, manufacture_year: "2019" }).tp.status, "unsupported");
+  assert.equal(rate({ ...haryana, registration_year: "2019" }).tp.status, "ambiguous");
+  assert.equal(rate({ ...haryana, registration_year: "2016" }).tp.status, "ambiguous");
+  assert.equal(rate({ ...haryana, registration_year: "2015" }).tp.rate, "5");
+  assert.equal(rate({ ...andaman, start_date: "", registration_year: "2019" }).tp.status, "ambiguous");
+});
+
 test("HDFC applies the geographic, GWP and fuel/NCB rows without treating OD premium as GWP", () => {
   const result = rate(hdfc);
   assert.equal(result.status, "unsupported");
@@ -105,6 +138,36 @@ test("HDFC applies the geographic, GWP and fuel/NCB rows without treating OD pre
   assert.deepEqual(rate({ ...hdfc, fuel: "", current_ncb: "0" }).review_fields, ["fuel"]);
   assert.deepEqual(rate({ ...hdfc, fuel: "", policy_type: "Private Car SAOD" }).review_fields, ["fuel"]);
   assert.deepEqual(rate({ ...hdfc, rto: "", fuel: "" }).review_fields, ["rto"]);
+});
+
+test("HDFC requires defensible local labels for the split state rows", () => {
+  for (const location of ["Bengaluru", "Bengaluru, Karnataka", "Bangalore (Karnataka)"]) {
+    assert.equal(rate({ ...hdfc, rto: "KA01", rto_location: location }).od.rate, "17.5", location);
+  }
+  for (const location of ["Karnataka", "Unknown, Karnataka", "Bengaluru, Gujarat", "Bengaluru / Mysuru, Karnataka",
+    "Bengaluru Rural, Karnataka", "Ahmedabad, Karnataka", "Delhi, Karnataka", "Mysuru"]) {
+    const unresolved = rate({ ...hdfc, rto: "KA01", rto_location: location });
+    assert.deepEqual([unresolved.od.status, unresolved.od.rate, unresolved.review_fields],
+      ["ambiguous", null, ["rto_location"]], location);
+  }
+  assert.equal(rate({ ...hdfc, rto: "KA09", rto_location: "Mysuru, Karnataka" }).od.rate, "15");
+  assert.equal(rate({ ...hdfc, rto: "KA09", rto_location: "Rest of Karnataka" }).od.rate, "15");
+  assert.equal(rate({ ...hdfc, rto: "AS01", rto_location: "Kamrup, Assam" }).od.rate, "17.5");
+  assert.equal(rate({ ...hdfc, rto: "AS02", rto_location: "Nagaon, Assam" }).od.rate, "15");
+});
+
+test("HDFC cites the effective date and withholds OD without a verified start date", () => {
+  const result = rate(hdfc);
+  assert.ok(result.trace.some(({ sources, policy_fields }) =>
+    sources.some(source => source.row?.includes("Effective from")) && policy_fields?.includes("start_date")));
+  for (const start_date of ["", "not verified", "2025-02-31"]) {
+    const missing = rate({ ...hdfc, start_date });
+    assert.deepEqual([missing.od.status, missing.od.rate, missing.review_fields], ["ambiguous", null, ["start_date"]]);
+    assert.equal(rate({ ...hdfc, start_date, eligible_private_car_gwp: "" }).gwp_preview, undefined);
+  }
+  assert.equal(rate({ ...hdfc, start_date: "2025-01-31" }).od.status, "unsupported");
+  assert.equal(rate({ ...hdfc, start_date: "", eligible_private_car_gwp: "10000" }).od.status, "unsupported");
+  assert.equal(rate({ ...hdfc, start_date: "", policy_type: "Private Car SATP" }).tp.status, "unsupported");
 });
 
 test("HDFC previews only a unique, cited OD rate without treating a policy premium as verified GWP", () => {

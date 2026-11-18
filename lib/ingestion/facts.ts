@@ -77,7 +77,8 @@ export function canonical(field: string, text: string): string | null {
   if (!raw || /^(?:n\/a|na|null|unknown|-)$/i.test(raw)) return null;
   if (field.endsWith("_date")) return dateValue(raw);
   if (numericField(field)) {
-    raw = raw.replace(/^(?:₹|INR)\s*/i, "").replace(/%$/, "").trim();
+    if (!field.endsWith("_ncb")) raw = raw.replace(/^(?:₹|INR)\s*/i, "");
+    raw = raw.replace(/%$/, "").trim();
     if (!/^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,2}(?:,[0-9]{2})*,[0-9]{3})(?:\.[0-9]+)?$/.test(raw)) return null;
     const [integer, decimal] = raw.replaceAll(",", "").split(".");
     const whole = integer.replace(/^0+(?=\d)/, "");
@@ -129,15 +130,23 @@ function registrationRto(quote: string) {
 }
 
 const currentNcbLabel = /^(?:less|current|applicable)\s*(?:[:|−-]\s*)?(?:no\s+claim\s+bonus|ncb)\b/i;
+const previousReference = /\b(previous|prior|old|expiring)\b/;
+const currentPolicyFields = new Set(["insurer", "current_ncb", "rto", "start_date", "end_date"]);
 
 function previousPolicyLines(lines: string[]) {
-  let previous = false;
+  let previous: "section" | "reference" | null = null;
   return lines.map(line => {
     const heading = line.replace(/^[^a-z]*(?:[ivxlcdm]+ [.):\-] +)?/, "");
-    if (/^(?:(?:details|information) (?:of|for) (?:the )?)?(?:previous|prior|old|expiring) (?:insurance|insurer|policy)\b/.test(heading)) previous = true;
-    if (/^(?:current|new) (?:insurance|policy|vehicle)\b/.test(heading)) previous = false;
+    if (/^(?:(?:details|information) (?:of|for) (?:the )?)?(?:previous|prior|old|expiring) (?:insurance|insurer|policy)(?: (?:details|information))?(?: \( if applicable \))?[^a-z0-9]*$/.test(heading)) previous = "section";
+    else if (!previous && /^(?:previous|prior|old|expiring) policy (?:no|number)\b/.test(heading)) previous = "reference";
+    if (/^(?:(?:current|new|proposed) (?:insurance|policy|vehicle)\b|(?:insured|nominee|proposer|financier|vehicle) (?:details|information)\b)/.test(heading)) previous = null;
     return previous;
   });
+}
+
+function isPriorContext(field: Field, marker: ReturnType<typeof previousPolicyLines>[number]) {
+  return marker === "section" ? currentPolicyFields.has(field) :
+    marker === "reference" && (field === "current_ncb" || field === "rto");
 }
 
 function scheduleCandidates(read: PageRead): Candidate[] {
@@ -177,7 +186,7 @@ const PREMIUM_BASIS = {
 };
 
 function legalInsurer(value: string) {
-  return /\binsurance(?: (?:company|co))? (?:limited|ltd)\b/.test(comparable(value));
+  return /\binsurance(?: (?:company|co)(?: \.)?)? (?:limited|ltd)\b/.test(comparable(value));
 }
 
 function documentHeading(candidate: Candidate) {
@@ -190,25 +199,24 @@ export function grounded(candidate: Candidate, transcript: string) {
   return groundedOnPage(candidate, normalizedLines(transcript));
 }
 
-function groundedOnPage(candidate: Candidate, lines: string[]) {
+function groundedOnPage(candidate: Candidate, lines: string[], previousSections = previousPolicyLines(lines)) {
   const { field, quote, value } = candidate;
   const context = comparable(quote);
-  const previousSections = field === "current_ncb" || field === "rto" ? previousPolicyLines(lines) : [];
-  const found = lines.filter((line, index) => !previousSections[index] && line.includes(` ${context} `));
+  const found = lines.filter((line, index) => !isPriorContext(field, previousSections[index]) &&
+    line.includes(` ${context} `));
   if (!context || !found.length) return false;
   if (field === "vehicle_class" && (policyCoverage(value) || vehicleBodyStyle(value))) return false;
-  const previousInsurerLine = (field === "previous_insurer" || field === "insurer") &&
-    lines.some((line, index) => /^ name of (?:the )?insurer\b/.test(line) && line.includes(` ${context} `) &&
-      /^ previous (?:insurance|policy) (?:details|information)(?: :)? $/.test(lines[index - 1] ?? ""));
-  if (field === "insurer" && previousInsurerLine) return false;
   if (comparable(value) === context) {
-    return documentHeading(candidate) && found.some(line => !/\b(previous|prior|old|expiring)\b/.test(line));
+    return documentHeading(candidate) && found.some(line => !previousReference.test(line));
   }
-  const previous = /\b(previous|prior)\b/.test(context);
-  if (field.startsWith("previous_") && !previous && !previousInsurerLine) return false;
+  const previous = previousReference.test(context);
+  if (field.startsWith("previous_") && !previous && !lines.some((line, index) =>
+    previousSections[index] === "section" && line.includes(` ${context} `) &&
+    (field === "previous_ncb" || /^ (?:\| )?(?:name of (?:the )?insurer|insurer(?: name)?)\b/.test(line)))) return false;
   if (previous && (["insurer", "current_ncb", "policy_type", "start_date", "end_date", "business_type"].includes(field)
     || field.endsWith("_premium"))) return false;
-  if (field.endsWith("_ncb") && !/\b(ncb|no claim bonus)\b/.test(context)) return false;
+  if (field.endsWith("_ncb") && (!/\b(ncb|no claim bonus)\b/.test(context) ||
+    !/(?:%|\b(?:percentage|percent|per cent)\b)/.test(context) || /(?:₹|\b(?:inr|rs|rupees?)\b)/.test(context))) return false;
   const label = LABELS[field];
   if (label && !label.test(context)) return false;
   if (field.endsWith("_premium")) {
@@ -243,11 +251,12 @@ function groundedOnPage(candidate: Candidate, lines: string[]) {
 
 export function decide(filename: string, reads: PageRead[], complete = true): Record<Field, FieldDecision> {
   const decisions = new Map<Field, FieldDecision>();
-  const prepared = reads.map(read => ({
-    ...read, candidates: scheduleCandidates(read), lines: normalizedLines(read.transcript),
-  }));
+  const prepared = reads.map(read => {
+    const lines = normalizedLines(read.transcript);
+    return { ...read, candidates: scheduleCandidates(read), lines, previousSections: previousPolicyLines(lines) };
+  });
   const headingAnchors = prepared.flatMap(read => read.candidates
-    .filter(candidate => documentHeading(candidate) && groundedOnPage(candidate, read.lines))
+    .filter(candidate => documentHeading(candidate) && groundedOnPage(candidate, read.lines, read.previousSections))
     .map(candidate => ({ field: candidate.field, page: read.page, reader: read.reader, value: comparable(candidate.value) })));
   for (const field of FIELDS) {
     const evidence = new Map<string, Evidence>();
@@ -255,7 +264,7 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
     const observed = new Map<string, Map<number, Set<Reader>>>();
     const headingReaders = new Set<Reader>();
     let invalidDate = false;
-    for (const {page, reader, model, lines, candidates, protocol, quoteOnly} of prepared) {
+    for (const {page, reader, model, lines, previousSections, candidates, protocol, quoteOnly} of prepared) {
       for (const candidate of candidates) {
         if (candidate.field !== field) continue;
         const source = {
@@ -264,13 +273,15 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
         };
         const key = JSON.stringify(source);
         const heading = documentHeading(candidate) ? comparable(candidate.value) : "";
+        const quote = comparable(candidate.quote);
+        const inPreviousSection = lines.some((line, index) => isPriorContext(field, previousSections[index]) && line.includes(` ${quote} `));
         // An exact heading can share the same-page citation from an independently transcribed match.
-        const anchoredHeading = heading && heading === comparable(candidate.quote) &&
+        const anchoredHeading = heading && heading === quote && !inPreviousSection &&
           headingAnchors.some(anchor => anchor.field === field && anchor.page === page && anchor.reader !== reader && anchor.value === heading) &&
-          !lines.some(line => line.includes(` ${heading} `) && /\b(previous|prior|old|expiring)\b/.test(line));
-        const anchoredQuote = quoteOnly && prepared.some(other =>
-          other.page === page && other.reader !== reader && !other.quoteOnly && groundedOnPage(candidate, other.lines));
-        if (!groundedOnPage(candidate, lines) && !anchoredHeading && !anchoredQuote) {
+          !lines.some(line => line.includes(` ${heading} `) && previousReference.test(line));
+        const anchoredQuote = quoteOnly && !inPreviousSection && prepared.some(other =>
+          other.page === page && other.reader !== reader && !other.quoteOnly && groundedOnPage(candidate, other.lines, other.previousSections));
+        if (!groundedOnPage(candidate, lines, previousSections) && !anchoredHeading && !anchoredQuote) {
           rejected.set(key, source);
           continue;
         }

@@ -27,7 +27,7 @@ type Surface = "intake" | "short" | "full" | "details";
 type Submission = { started: number; id?: string; cancelled?: boolean; timer?: ReturnType<typeof setTimeout> };
 
 function pending(run: Run) {
-  return run.status === "queued" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now());
+  return run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now();
 }
 
 function isCurrent(previous: Run, next: Run) {
@@ -261,6 +261,8 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
   const [fileError, setFileError] = useState("");
   const [restart, setRestart] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [decisionFilter, setDecisionFilter] = useState<string>(session.preferences?.decision_filter || "all");
   const [managed, setManaged] = useState<Run>();
@@ -362,7 +364,7 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
       setActive({ id });
       show("details");
     }
-    api<{ runs: Run[]; ocr: OcrMode }>("/api/runs", { signal: controller.signal }).then(({ runs, ocr }) => {
+    api<{ runs: Run[]; ocr: OcrMode; nextCursor: string | null }>("/api/runs", { signal: controller.signal }).then(({ runs, ocr, nextCursor }) => {
       if (controller.signal.aborted) return;
       if (!id && !selected.current && session.preferences?.landing === "last" &&
           new URLSearchParams(window.location.search).get("new") !== "1") {
@@ -375,10 +377,30 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
         return [...byId.values()].sort((a, b) => b.created_at.localeCompare(a.created_at));
       });
       setOcr(ocr);
+      setNextCursor(nextCursor);
       setHistoryLoaded(true);
     }).catch((error: unknown) => { if (!controller.signal.aborted) { fail(error); setHistoryLoaded(true); } });
     return () => { live.current = false; controller.abort(); };
   }, [restart]);
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const page = await api<{ runs: Run[]; nextCursor: string | null }>(`/api/runs?after=${encodeURIComponent(nextCursor)}`);
+      if (!live.current) return;
+      setRuns(current => {
+        const seen = new Set(current.map(item => item.id));
+        return [...current, ...page.runs.filter(item => !seen.has(item.id) && !removedRuns.current.has(item.id))];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (error) {
+      fail(error);
+    } finally {
+      if (live.current) setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     if (!active) return;
@@ -772,8 +794,11 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
           setError("");
           select(item.id);
         }} onManage={() => setManaged(item)} />)}</ul> :
-      <p className="history-empty" role="status">{runs.length ? "No runs match this filter." :
+      <p className="history-empty" role="status">{runs.length ? nextCursor ? "No matches in the loaded runs." : "No runs match this filter." :
         historyLoaded ? (ocr ? "Your first analysis will appear here." : "Saved runs are unavailable.") : "Loading saved runs…"}</p>}
+    {nextCursor && <button className="button secondary" type="button" onClick={loadMore} disabled={loadingMore}>
+      {loadingMore ? "Loading saved runs…" : "Load more saved runs"}
+    </button>}
   </>;
   const hit = preflight?.cache === "hit";
   const remaining = preflight?.pagesTotal != null ? preflight.pagesTotal - preflight.pagesCached : null;

@@ -1,5 +1,5 @@
 import data from "./cards.json" with { type: "json" };
-import { component, integer, rtoCode, validRto } from "./types.ts";
+import { component, integer, policyStartDate, rtoCode, validRto } from "./types.ts";
 import type { Facts, Parts, Source, Status } from "./types.ts";
 
 const RTO = "4W  RTO";
@@ -17,28 +17,58 @@ const rtos = data.digit.rtos as RtoRow[];
 const rates = data.digit.tp as RateRow[];
 const source = (sheet: string, cells: string): Source => ({ file, sheet, cells });
 
-function inBand(raw: string, value: number | null): boolean | null {
+function inBand(raw: string, minimum: number | null, maximum = minimum): boolean | null {
   const label = raw.trim().toLowerCase();
   if (label === "" || label === "all") return true;
+  if (minimum === null || maximum === null) return null;
   const threshold = /^([<>])(\d+)$/.exec(label);
-  if (threshold) return value === null ? null : threshold[1] === "<" ? value < Number(threshold[2]) : value > Number(threshold[2]);
   const range = /^(\d+)-(\d+)$/.exec(label);
-  if (range) return value === null ? null : value >= Number(range[1]) && value <= Number(range[2]);
-  throw new Error("Unexpected Go Digit CC or age band");
+  if (!threshold && !range) throw new Error("Unexpected Go Digit CC or age band");
+  const [lower, upper] = range ? [Number(range[1]), Number(range[2])] :
+    threshold![1] === "<" ? [-Infinity, Number(threshold![2]) - 1] : [Number(threshold![2]) + 1, Infinity];
+  if (minimum > upper || maximum < lower) return false;
+  return minimum >= lower && maximum <= upper ? true : null;
 }
 
-function restriction(note: string, cc: number | null, age: number | null): Status | null {
+function vehicleAge(policy: Facts) {
+  const exact = integer(policy.vehicle_age);
+  const start = policyStartDate(policy.start_date);
+  const years = ["manufacture_year", "registration_year"].flatMap(field => {
+    const year = integer(policy[field]);
+    return year !== null && year >= 1886 && year <= 2100 ? [{ field, year }] : [];
+  });
+  const ageFields = exact === null ? [] : ["vehicle_age"];
+  if (!start || !years.length) return exact === null ? undefined :
+    { min: exact, max: exact, fields: ageFields, step: `Verified vehicle age is ${exact} years.` };
+  const startYear = Number(start.slice(0, 4));
+  const fields = [...ageFields, "start_date", ...years.map(({ field }) => field)];
+  if (years.some(({ year }) => year > startYear) || (years.length === 2 && years[0].year > years[1].year)) {
+    return { min: null, max: null, fields, conflict: true, step: "The policy start date and vehicle years do not establish a consistent age." };
+  }
+  const manufacture = years.find(({ field }) => field === "manufacture_year")?.year;
+  const oldest = manufacture === undefined ? Infinity : startYear - manufacture;
+  const youngest = startYear - years.at(-1)!.year;
+  const min = Math.max(0, youngest - (start.endsWith("-12-31") ? 0 : 1));
+  if (exact !== null) return exact < min || exact > oldest
+    ? { min: null, max: null, fields, conflict: true, step: `The stated vehicle age of ${exact} years conflicts with the policy start date and vehicle years.` }
+    : { min: exact, max: exact, fields, step: `The stated vehicle age of ${exact} years agrees with the policy start date and vehicle years.` };
+  const ageText = oldest === Infinity ? `at least ${min}` : min === oldest ? String(oldest) : `${min}–${oldest}`;
+  const step = `The verified vehicle year${years.length === 1 ? "" : "s"} and policy start date imply ${ageText} completed years of age.`;
+  return { min, max: oldest, fields, step };
+}
+
+function restriction(note: string, cc: number | null, belowTen: boolean | null): Status | null {
   const midCapacity = cc === null || (cc >= 1000 && cc <= 1500);
   if (note === "1000-1500CC and <10 age is declined") {
-    if (!midCapacity || (age !== null && age >= 10)) return null;
-    return cc === null || age === null ? "ambiguous" : "unsupported";
+    if (!midCapacity || belowTen === false) return null;
+    return cc === null || belowTen === null ? "ambiguous" : "unsupported";
   }
   if (note.toLowerCase().includes("more than 1500cc and 10+age")) {
-    if ((cc !== null && cc <= 1500) || (age !== null && age < 10)) return null;
-    return note.startsWith("Few RTOs") || cc === null || age === null ? "ambiguous" : "unsupported";
+    if ((cc !== null && cc <= 1500) || belowTen === true) return null;
+    return note.startsWith("Few RTOs") || cc === null || belowTen === null ? "ambiguous" : "unsupported";
   }
-  if (note === "Few RTOs for 10+ age are declined" && age !== null && age < 10) return null;
-  if (note === "Few RTOs for <10 age are declined" && age !== null && age >= 10) return null;
+  if (note === "Few RTOs for 10+ age are declined" && belowTen === true) return null;
+  if (note === "Few RTOs for <10 age are declined" && belowTen === false) return null;
   if (note === "Few RTOs for 1000-1500CC segment are declined" && !midCapacity) return null;
   return "ambiguous";
 }
@@ -95,10 +125,12 @@ export function digit(policy: Facts): Parts {
     return finish("ambiguous", reason, null, ["fuel"]);
   }
   const cc = integer(policy.engine_cc) || null;
-  const age = integer(policy.vehicle_age);
+  const age = vehicleAge(policy);
+  const belowTen = inBand("<10", age?.min ?? null, age?.max ?? null);
   const clusterRates = rates.filter(([, label]) => [clusterKey, clusters[clusterKey]].includes(label.toLowerCase()));
-  const matched: { row: RateRow; citation: Source; missing: string[] }[] = [];
+  const matched: { row: RateRow; citation: Source; missing: string[]; ageAffectsNote: boolean }[] = [];
   const fuelSources: Source[] = [];
+  const ageSources: Source[] = [];
   for (const row of clusterRates) {
     const [i, , segment, ageBand, , note] = row;
     const label = /^(CNG|Diesel|Petrol)\s*(.*)$/i.exec(segment);
@@ -106,10 +138,16 @@ export function digit(policy: Facts): Parts {
     const citation = source(TP, `B${i}:${note ? "F" : "E"}${i}`);
     fuelSources.push(citation);
     const ccMatch = inBand(label[2], cc);
-    const ageMatch = inBand(ageBand, age);
-    if (ccMatch === false || ageMatch === false) continue;
-    matched.push({ row, citation, missing: [...(ccMatch === null ? ["engine_cc"] : []), ...(ageMatch === null ? ["vehicle_age"] : [])] });
+    if (ccMatch === false) continue;
+    const ageMatch = inBand(ageBand, age?.min ?? null, age?.max ?? null);
+    const ageAffectsNote = !!note && restriction(note, cc, true) !== restriction(note, cc, false);
+    if (ageBand !== "All" || ageAffectsNote) ageSources.push(citation);
+    if (ageMatch === false) continue;
+    matched.push({ row, citation, ageAffectsNote,
+      missing: [...(ccMatch === null ? ["engine_cc"] : []), ...(ageMatch === null ? ["vehicle_age"] : [])] });
   }
+  if (age && ageSources.length) trace.push({ step: age.step, sources: ageSources, policy_fields: age.fields });
+  if (age?.conflict && ageSources.length) return finish("ambiguous", age.step, null, age.fields);
   const review = [...new Set(matched.flatMap(({ missing }) => missing))];
   if (review.length) {
     const missing = review.map(field => field === "engine_cc" ? "engine capacity (cc)" : "vehicle age").join(" and ");
@@ -124,15 +162,15 @@ export function digit(policy: Facts): Parts {
     return finish("unsupported", reason);
   }
   const outcomes = new Set<string>();
-  for (const { row, citation } of matched) {
+  for (const { row, citation, ageAffectsNote } of matched) {
     const [, label, segment, band, rate, note] = row;
     cite(`Selected ${label} / ${segment} / age ${band} by the SATP row labels.`, citation);
     if (note) {
       cite(`Checked the row’s restriction: ${note}.`, citation);
-      const result = restriction(note, cc, age);
+      const result = restriction(note, cc, belowTen);
       if (result) return finish(result, result === "unsupported" ? `${note}.` : `The available facts do not clear the source restriction: ${note}.`, null,
         result === "ambiguous" ? [...(cc === null && /cc/i.test(note) ? ["engine_cc"] : []),
-          ...(age === null && /age/i.test(note) ? ["vehicle_age"] : [])] : undefined);
+          ...(belowTen === null && ageAffectsNote ? ["vehicle_age"] : [])] : undefined);
     }
     if (rate === null) {
       const reason = "The matching SATP row has no numeric Max CD2 rate.";

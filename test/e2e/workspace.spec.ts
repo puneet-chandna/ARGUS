@@ -148,7 +148,8 @@ test("an unseen HDFC package can finish OD with eligible GWP and its own source"
   const insurer = "HDFC ERGO General Insurance Company Limited";
   const title = "Private Car Comprehensive Policy";
   const premium = "Net Premium 75000";
-  const lines = [insurer, title, "Registration No: MH-12-AB-0123", "Less: No Claim Bonus (20%)", premium];
+  const start = "Policy start date: 25-Feb-2026";
+  const lines = [insurer, title, "Registration No: MH-12-AB-0123", "Less: No Claim Bonus (20%)", premium, start];
   const pdf = syntheticPdf(...lines);
   const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
     reader, page: 1, model: "test", transcript: lines.join("\n"),
@@ -156,6 +157,7 @@ test("an unseen HDFC package can finish OD with eligible GWP and its own source"
       { field: "insurer", value: insurer, quote: insurer, box: null },
       { field: "policy_type", value: title, quote: title, box: null },
       { field: "net_premium", value: "75000", quote: premium, box: null },
+      { field: "start_date", value: "25-Feb-2026", quote: start, box: null },
     ],
   }));
   const seed = await reviewer.db.from("argus_ocr_cache").insert({

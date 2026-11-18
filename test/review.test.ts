@@ -12,7 +12,7 @@ function clarify(report: Report, input: {field: string; value: string; page: num
 test("HDFC asks for and credits an eligible GWP source independently of policy fields", () => {
   const filename = "unseen-package.pdf";
   const facts = { insurer: "HDFC ERGO", policy_type: "Private Car Comprehensive Policy",
-    rto: "MH12", current_ncb: "20", net_od_premium: "5200" };
+    rto: "MH12", start_date: "2025-02-01", current_ncb: "20", net_od_premium: "5200" };
   const fields = Object.fromEntries(Object.entries(facts).map(([field, value]) =>
     [field, { value, status: "accepted" as const, reason: "independent_agreement", evidence: [] }]));
   const report = applyRating({ filename, checksum: "a".repeat(64), extraction_version: "test",
@@ -43,7 +43,7 @@ test("HDFC asks for and credits an eligible GWP source independently of policy f
 
 test("a rating blocker keeps an accepted OCR value open for correction", () => {
   const facts = { insurer: "HDFC ERGO", policy_type: "Private Car Comprehensive Policy",
-    rto: "HR26", current_ncb: "0", fuel: "hydrogen" };
+    rto: "HR26", start_date: "2025-02-01", current_ncb: "0", fuel: "hydrogen" };
   const fields = Object.fromEntries(Object.entries(facts).map(([field, value]) =>
     [field, { value, status: "accepted" as const, reason: "independent_agreement", evidence: [] }]));
   const missingGwp = applyRating({ filename: "unseen.pdf", checksum: "a".repeat(64), extraction_version: "test",
@@ -59,6 +59,14 @@ test("a rating blocker keeps an accepted OCR value open for correction", () => {
   assert.deepEqual(requiredReviewFields(confirmed), []);
 
   assert.equal(clarifyBatch(missingGwp, [gwp, fuel], 4).od.rate, "10");
+
+  const legacyNcb = applyRating({ ...confirmed, fields: { ...confirmed.fields, current_ncb: {
+    ...fields.current_ncb, value: "50", evidence: (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+      file: confirmed.filename, page: 1, reader, model: "legacy", raw: "50", quote: "NCB discount: ₹50", box: null,
+    })),
+  } } });
+  assert.equal(legacyNcb.od.rate, null);
+  assert.deepEqual(requiredReviewFields(legacyNcb), ["current_ncb"]);
 });
 
 test("a source-cited review resolves an OCR conflict and retains both readings", () => {

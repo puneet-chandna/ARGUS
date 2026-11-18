@@ -5,7 +5,7 @@ import { policyCoverage, vehicleBodyStyle } from "./rating/types.ts";
 const MANUAL_FIELDS: readonly Field[] = [
   "policy_type", "insurer", "vehicle_class", "previous_insurer", "business_type",
   "rto", "rto_location", "make", "model", "fuel", "engine_cc", "vehicle_age",
-  "start_date", "current_ncb", "eligible_private_car_gwp", "standalone_zd",
+  "start_date", "manufacture_year", "registration_year", "current_ncb", "eligible_private_car_gwp", "standalone_zd",
   "tyre_rti_bundle", "extended_warranty",
 ];
 const CHECKS = new Set([...CLARIFIABLE, "invalid_coverage_period", "premium_totals_disagree"]);
@@ -48,7 +48,7 @@ export function reviewFields(report: ReviewableReport) {
 export function requiredReviewFields(report: ReviewableReport) {
   if (report.status !== "ambiguous") return [];
   const allowed = new Set<string>(reviewFields(report));
-  if (report.rule_version?.endsWith("-tata-rto-v2") || /-hdfc-od-v[23]$/.test(report.rule_version ?? "")) {
+  if (report.rule_version?.endsWith("-tata-rto-v2") || /-hdfc-od-v[234]$/.test(report.rule_version ?? "")) {
     return (report.review_fields ?? []).filter(field => allowed.has(field));
   }
   return [...new Set([...conflictFields(report), ...(report.review_fields ?? [])])].filter(field => allowed.has(field));

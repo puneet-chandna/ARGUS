@@ -28,7 +28,7 @@
 
 Open the live app: **<https://argus.puneetchandna.com/>**
 
-Sign in and upload a synthetic or de-identified policy PDF. See [local setup](#run-locally) and [deployment](#deploy-to-render).
+Sign in and upload a synthetic or de-identified policy PDF.
 
 ## What Argus does
 
@@ -109,35 +109,7 @@ These four traces replay source-reviewed facts from the supplied policies throug
 | Reliance, comprehensive | Needs review. The workbook does not establish OD applicability on the policy start date. Package TP is unsupported. | [JSON](submission/pvt-car-comprehensive-reliance.json) |
 | Tata AIG, stand-alone TP | Resolved. Base TP 38%. | [JSON](submission/pvt-car-satp-tata-aig.json) |
 
-## Run locally
 
-Install Node.js 24 or later, Poppler, Docker, and the Supabase CLI. Extract the [official starter bundle](https://solvetojoin.vaatun.com/downloads/insurance-rater-agent-challenge.zip) into `vaatun-starter-bundle/` alongside the pinned manifest.
-
-```bash
-npm ci
-npm run verify:corpus
-cp .env.example .env.local
-supabase_dir=$(mktemp -d)
-supabase --workdir "$supabase_dir" init
-cp -r supabase/migrations "$supabase_dir/supabase/"
-supabase --workdir "$supabase_dir" start
-```
-
-In `.env.local`, set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` from the local project's API URL, publishable key, and secret key. The CLI's `status --output env` also reports `API_URL`, `ANON_KEY`, and `SERVICE_ROLE_KEY`. Start Argus with `npm run dev` and open <http://localhost:3000>. Set OCR keys as described in [.env.example](.env.example) only when the provider access is free and the sample is authorized.
-
-Run `npm test`, `npm run typecheck`, and `npm run build` for local checks. The [CI workflow](.github/workflows/checks.yml) shows how to run the integration and Playwright suites against local Supabase and `npm run start`.
-
-## Deploy to Render
-
-Apply the [Supabase migrations](supabase/migrations) to the hosted project. Create a Render Blueprint using [render.yaml](render.yaml) and configure its three Supabase variables. Set `ARGUS_PUBLIC_ORIGIN` to the public HTTPS origin when using a custom domain. For public signup, configure the Supabase Auth site URL, the exact `<origin>/auth/confirm` redirect, and SMTP.
-
-To check the deployment, upload an authorized synthetic PDF outside the four samples. Reopen its result and original PDF after refresh, browser reopen, sign-out and sign-in, app restart, and redeployment. Compare the original file’s SHA-256 before and after.
-
-## Record the README demo
-
-Start a local Supabase project with the Argus migrations and export `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` for that project. Use a checkout with Git history and the official starter bundle unpacked. Install Poppler, FFmpeg with `ffprobe`, and Playwright Chromium (`npx playwright install chromium`). The capture uses `gifsicle` if a GIF exceeds its size limit.
-
-Export `NVIDIA_API_KEY` for the free NVIDIA Build endpoints. For the second reader, export `SARVAM_API_KEY` if the account has verified free credits. Otherwise Argus uses NVIDIA-hosted Mistral Large 4. Run `npm run capture:readme` to build the production app and record all assets with a disposable demo account. The hero uses a cached result. The analysis clip runs live OCR on all four pages of the official Go Digit sample and cuts the long waits. Use `npm run capture:readme -- --live-only` to refresh just that clip.
 
 ## Data and storage
 

@@ -104,6 +104,21 @@ test("previous-policy deductions cannot override the current NCB", () => {
   }
 });
 
+test("NCB readings need a printed percentage unit", () => {
+  for (const field of ["current_ncb", "previous_ncb"] as const) {
+    const label = field === "current_ncb" ? "NCB" : "Previous NCB";
+    for (const suffix of [": 35%", " percentage: 35", " (%) | 35", ": 35 per cent"]) {
+      const quote = label + suffix;
+      assert.ok(grounded({ field, value: "35", quote, box: null }, quote), quote);
+    }
+    for (const suffix of [": 35", " discount: ₹35", " amount (Rs): 35", " percentage: INR 35"]) {
+      const quote = label + suffix;
+      assert.equal(grounded({ field, value: "35", quote, box: null }, quote), false, quote);
+    }
+  }
+  assert.equal(canonical("current_ncb", "₹35"), null);
+});
+
 test("normalizes unambiguous dates and exact amounts conservatively", () => {
   assert.equal(canonical("start_date", "03/04/2026"), null);
   assert.equal(canonical("start_date", "2026-02-31"), null);
@@ -362,4 +377,25 @@ test("a previous-insurance section grounds its insurer while unrelated headings 
   assert.ok(!grounded(candidate, `Proposed Insurance Details:\n${quote}`));
   assert.ok(!grounded(candidate, `Previous Insurance Details:\nNominee Details:\n${quote}`));
   assert.ok(!grounded({ ...candidate, field: "insurer" }, `Previous Insurance Details:\n${quote}`));
+  const prior = `II. Previous Insurance Details:\nPolicy number: 12345\nPeriod of cover: 2025\n${quote}`;
+  assert.ok(grounded(candidate, prior));
+  assert.ok(!grounded({ ...candidate, field: "insurer" }, prior));
+  assert.ok(!grounded({ ...candidate, field: "insurer", quote: value }, prior));
+  const reads: PageRead[] = [
+    { reader: "sarvam", model: "test", page: 1, transcript: prior, candidates: [{ ...candidate, field: "insurer", quote: value }] },
+    { reader: "nvidia-super-vl", model: "test", page: 1, transcript: value, candidates: [{ ...candidate, field: "insurer", quote: value }] },
+  ];
+  assert.equal(decide("policy.pdf", reads).insurer.value, null);
+  assert.ok(grounded({ ...candidate, field: "insurer", quote: value }, prior + `\nCurrent Policy Details:\n${value}`));
+});
+
+test("an inline previous policy reference does not start a section", () => {
+  const quote = "Policy Start Date: 2026-03-25";
+  const start = { field: "start_date" as const, value: "2026-03-25", quote, box: null };
+  const transcript = `Current Policy Schedule\nPrevious Policy Number: XYZ\n${quote}`;
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 1, transcript, candidates: [start],
+  }));
+  assert.equal(decide("policy.pdf", reads).start_date.value, "2026-03-25");
+  assert.equal(grounded(start, `Previous Policy Details:\n${quote}`), false);
 });
