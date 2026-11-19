@@ -29,6 +29,44 @@ test("legacy OCR issue dates cannot survive rerating as a policy start", () => {
   assert.deepEqual(requiredReviewFields(report), ["start_date"]);
 });
 
+test("legacy generic insurer quotes cannot establish the current insurer", () => {
+  const filename = "legacy.pdf";
+  const insurer = "go digit general insurance ltd.";
+  const policy = "private car liability only policy";
+  const facts = { insurer, policy_type: policy, rto: "UP78", fuel: "petrol", engine_cc: "1086", start_date: "2026-03-25" };
+  const evidence = (raw: string, quote: string) => (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    file: filename, page: 1, model: "old", reader, raw, quote, box: null,
+  }));
+  const fields: Report["fields"] = Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+    [field, { value, status: "accepted" as const, reason: "independent_agreement", evidence: [] }]));
+  // Older reports retained the Name of the Insurer row but not the Previous Policy No row above it.
+  fields.insurer = { ...fields.insurer, evidence: evidence(insurer, `Name of the Insurer: ${insurer}`) };
+  fields.policy_type = { ...fields.policy_type, evidence: evidence(policy, policy) };
+  const start = { field: "start_date", raw: facts.start_date, value: facts.start_date, page: 1, file: filename, type: "reviewer_confirmation" as const };
+  const extraction = { filename, checksum: "a".repeat(64), extraction_version: "brokerage-fields-v5",
+    reader_failures: {}, clarifications: [start],
+    fields: { ...fields, start_date: { ...fields.start_date, status: "confirmed_by_reviewer" as const, confirmation: start } } };
+  const blocked = applyRating(extraction);
+  assert.equal(blocked.tp.rate, null);
+  assert.deepEqual(requiredReviewFields(blocked), ["insurer"]);
+  assert.deepEqual(blocked.fields.insurer.evidence, fields.insurer.evidence);
+
+  for (const quote of [insurer, `Current Insurer: ${insurer}`]) {
+    const field = { ...fields.insurer, evidence: evidence(insurer, quote) };
+    assert.equal(applyRating({ ...extraction, fields: { ...extraction.fields, insurer: field } }).tp.rate, "29.5");
+  }
+  const manual = { ...fields.insurer, reason: "manual_source_verification" };
+  assert.equal(applyRating({ ...extraction, fields: { ...extraction.fields, insurer: manual } }).tp.rate, "29.5");
+  assert.equal(clarifyBatch(blocked, [{ field: "insurer", value: insurer, page: 1 }], 1).tp.rate, "29.5");
+
+  const unlabeledRole = { ...fields.policy_type, evidence: evidence(policy, `Policy Type: ${policy}`) };
+  const noCoverage = applyRating({ ...extraction, fields: { ...extraction.fields, insurer: manual, policy_type: unlabeledRole } });
+  assert.equal(noCoverage.tp.rate, null);
+  assert.deepEqual(requiredReviewFields(noCoverage), ["policy_type"]);
+  const labelledRole = { ...fields.policy_type, evidence: evidence(policy, `Current Policy Type: ${policy}`) };
+  assert.equal(applyRating({ ...extraction, fields: { ...extraction.fields, insurer: manual, policy_type: labelledRole } }).tp.rate, "29.5");
+});
+
 test("every rerating path withholds rates for an impossible coverage period", () => {
   const facts = { insurer: "Go Digit", policy_type: "Private Car SATP", rto: "UP78", fuel: "petrol",
     engine_cc: "1086", end_date: "2026-03-10" };
@@ -72,6 +110,7 @@ test("OCR-invalid coverage dates remain blocking until both boundaries are revie
   assert.equal(partial.od.applicable, false);
   assert.deepEqual(requiredReviewFields(partial), ["end_date"]);
   assert.ok(partial.trace.some(step => step.policy_fields?.includes("end_date") && step.sources.length === 2));
+  assert.ok(partial.trace.every(step => !step.step.includes("29.5")));
   const invalid = clarifyBatch(partial, [{ field: "end_date", value: "2026-03-20", page: 1 }], 1);
   assert.equal(invalid.tp.rate, null);
   const valid = clarifyBatch(partial, [{ field: "end_date", value: "2027-03-24", page: 1 }], 1);
@@ -81,6 +120,72 @@ test("OCR-invalid coverage dates remain blocking until both boundaries are revie
     end_date: { value: null, status: "needs_review", reason: "insufficient_agreement", evidence: [] },
   } });
   assert.equal(optionalEnd.tp.rate, "29.5");
+});
+
+test("a grounded impossible expiry remains blocking until the expiry is confirmed", () => {
+  const filename = "invalid-expiry.pdf";
+  const start = "Policy Start Date: 2026-03-25";
+  const expiry = "Policy Expiry Date: 31/02/2027";
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 1, transcript: `${start}\n${expiry}`, candidates: [
+      { field: "start_date", value: "2026-03-25", quote: start, box: null },
+      { field: "end_date", value: "31/02/2027", quote: expiry, box: null },
+    ],
+  }));
+  const dates = decide(filename, reads);
+  assert.equal(dates.start_date.value, "2026-03-25");
+  assert.equal(dates.end_date.reason, "ambiguous_date");
+  assert.equal(dates.end_date.value, null);
+  assert.equal(dates.end_date.evidence.length, 2);
+  const facts = { insurer: "Go Digit", policy_type: "Private Car SATP", rto: "UP78", fuel: "petrol", engine_cc: "1086" };
+  const accepted = Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+    [field, { value, status: "accepted" as const, reason: "source_verified", evidence: [] }]));
+  const report = applyRating({ filename, checksum: "a".repeat(64), extraction_version: "test",
+    reader_failures: {}, clarifications: [], fields: { ...dates, ...accepted } });
+  assert.equal(report.tp.rate, null);
+  assert.equal(report.od.applicable, false);
+  assert.deepEqual(requiredReviewFields(report), ["end_date"]);
+  assert.ok(report.trace.every(step => !step.step.includes("29.5")));
+  const legacy = applyRating({ ...report, extraction_version: "brokerage-fields-v5", fields: { ...report.fields,
+    end_date: { ...dates.end_date, status: "rejected", reason: "invalid_or_ungrounded" },
+  } });
+  assert.equal(legacy.tp.rate, null, "An older rejected expiry must not bypass the new coverage blocker");
+  assert.equal(legacy.fields.end_date.reason, "ambiguous_date");
+  const corrected = clarifyBatch(report, [{ field: "end_date", value: "2027-03-24", page: 1 }], 1);
+  assert.equal(corrected.tp.rate, "29.5");
+  assert.deepEqual(corrected.fields.end_date.evidence, dates.end_date.evidence);
+});
+
+test("a reviewer can explicitly reuse a prior fuel value without hiding its origin", () => {
+  const filename = "reuse.pdf", quote = "Fuel: Petrol (Previous Policy)";
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 2, transcript: quote,
+    candidates: [{ field: "fuel", value: "Petrol", quote, box: null }],
+  }));
+  const fields = decide(filename, reads);
+  const facts = { insurer: "Go Digit", policy_type: "Private Car SATP", rto: "UP78", engine_cc: "1086", start_date: "2026-03-25" };
+  const report = applyRating({ filename, checksum: "a".repeat(64), extraction_version: "test", reader_failures: {}, clarifications: [],
+    fields: { ...fields, ...Object.fromEntries(Object.entries(facts).map(([field, value]) =>
+      [field, { value, status: "accepted", reason: "source_verified", evidence: [] }])) } });
+  assert.equal(report.tp.rate, null);
+  const answer = { field: "fuel", value: "Petrol", page: 2, basis: "previous_policy" };
+  const legacy = applyRating({ ...report, extraction_version: "brokerage-fields-v5", fields: { ...report.fields,
+    fuel: { ...fields.fuel, value: "petrol", status: "accepted", reason: "independent_agreement" },
+  } });
+  assert.equal(legacy.tp.rate, null, "Legacy acceptance of prior fuel still needs confirmation");
+  const confirmed = clarifyBatch(report, [answer], 2);
+  assert.equal(confirmed.tp.rate, "29.5");
+  assert.equal(confirmed.fields.fuel.confirmation?.basis, "previous_policy");
+  assert.equal(confirmed.confidence.level, "low");
+  assert.match(confirmed.confidence.reason, /previous.policy/i);
+  assert.ok(confirmed.trace.some(step => /fuel.*previous.policy.*current.policy/i.test(step.step) && step.sources.length >= 2));
+  assert.deepEqual(confirmed.fields.fuel.evidence, fields.fuel.evidence);
+  assert.throws(() => clarifyBatch(report, [{ ...answer, value: "Diesel" }], 2), /previous.policy evidence/i);
+  assert.throws(() => clarifyBatch(report, [{ ...answer, page: 1 }], 2), /previous.policy evidence/i);
+  assert.throws(() => clarifyBatch(report, [{ ...answer, basis: "guess" }], 2), /confirmation basis/i);
+  const reopened = applyRating(rebindExtraction(confirmed, "renamed.pdf"));
+  assert.equal(reopened.tp.rate, "29.5");
+  assert.equal(reopened.fields.fuel.confirmation?.basis, "previous_policy");
 });
 
 test("a read-only review preview can discover the next blocker before all conflicts are confirmed", () => {
@@ -96,6 +201,24 @@ test("a read-only review preview can discover the next blocker before all confli
   const preview = clarifyBatch(report, answer, 1, true);
   assert.deepEqual(requiredReviewFields(preview), ["fuel"]);
   assert.equal(report.fields.engine_cc.value, null);
+});
+
+test("saving one verified fact preserves another required dispute without publishing a rate", () => {
+  const fields: Report["fields"] = Object.fromEntries(Object.entries({ insurer: "Reliance", previous_insurer: "Reliance",
+    policy_type: "Private Car Package Policy", rto: "MH01", start_date: "2026-01-15" }).map(([field, value]) =>
+    [field, { value, status: "accepted", reason: "source_verified", evidence: [] }]));
+  fields.model = { value: null, status: "needs_review", reason: "conflicting_readings", evidence: [] };
+  const report = applyRating({ filename: "partial.pdf", checksum: "a".repeat(64), extraction_version: "test",
+    fields, reader_failures: {}, clarifications: [] });
+  assert.deepEqual(requiredReviewFields(report), ["make", "model"]);
+  const answers = [{ field: "make", value: "Maruti", page: 1 }];
+  assert.throws(() => clarifyBatch(report, answers, 1), /every OCR conflict/);
+  const partial = clarifyBatch(report, answers, 1, false, true);
+  assert.equal(partial.fields.make.status, "confirmed_by_reviewer");
+  assert.equal(partial.fields.model.status, "needs_review");
+  assert.equal(partial.od.rate, null);
+  assert.equal(partial.status, "ambiguous");
+  assert.deepEqual(requiredReviewFields(partial), ["model"]);
 });
 
 function clarify(report: Report, input: {field: string; value: string; page: number}, pages: number) {
@@ -336,4 +459,48 @@ test("independent readers can corroborate a printed policy heading despite missi
   assert.equal(decide("policy.pdf", [first, different]).policy_type.reason, "conflicting_readings");
   assert.equal(decide("policy.pdf", [first, { ...second, reader: first.reader }], false).policy_type.value, null);
   assert.equal(decide("policy.pdf", [first, { ...second, transcript: `Previous: ${title}` }], false).policy_type.value, null);
+});
+
+test("a single private-car reading cannot inherit independent coverage agreement", () => {
+  const read = (reader: PageRead["reader"], page: number, title: string, quote = title): PageRead => ({
+    reader, page, model: "test", transcript: quote,
+    candidates: [{ field: "policy_type", value: title, quote, box: null }],
+  });
+  const generic = "Package Policy";
+  const qualified = "Private Car Package Policy";
+  const first = read("sarvam", 1, generic);
+  const second = read("nvidia-super-vl", 1, generic);
+  const third = read("nvidia-super-vl", 2, qualified);
+  const unresolvedClass = decide("policy.pdf", [first, second, third]).policy_type;
+  assert.equal(unresolvedClass.value, generic.toLowerCase());
+  assert.equal(unresolvedClass.evidence.length, 3);
+  const confirmedClass = decide("policy.pdf", [{ ...first, transcript: qualified, candidates: [
+    { ...first.candidates[0], quote: qualified },
+  ] }, second, third]).policy_type;
+  assert.equal(confirmedClass.value, qualified.toLowerCase());
+  assert.equal(decide("policy.pdf", [
+    read("sarvam", 1, "SATP", "Policy Type: SATP"),
+    read("nvidia-super-vl", 1, "Liability Only Policy"),
+  ]).policy_type.value, "liability only policy");
+  assert.equal(decide("policy.pdf", [
+    read("sarvam", 1, "Commercial Vehicle Package Policy"), third,
+  ]).policy_type.reason, "conflicting_readings");
+});
+
+test("legacy OCR cannot retain a private-car title from one qualified reading", () => {
+  const filename = "legacy.pdf";
+  const shorts = [
+    { reader: "sarvam" as const, page: 1, quote: "Package Policy" },
+    { reader: "nvidia-super-vl" as const, page: 1, quote: "Package Policy" },
+  ];
+  const qualified = { reader: "nvidia-super-vl" as const, page: 2, quote: "Private Car Package Policy" };
+  const evidence = [...shorts, qualified].map(source => ({ ...source, model: "old", file: filename, raw: source.quote, box: null }));
+  const decision = { value: qualified.quote.toLowerCase(), status: "accepted" as const, reason: "independent_agreement", evidence };
+  const extraction = { filename, checksum: "a".repeat(64), extraction_version: "brokerage-fields-v5",
+    reader_failures: {}, clarifications: [], fields: { policy_type: decision } };
+  const report = applyRating(extraction);
+  assert.equal(report.fields.policy_type.value, "package policy");
+  assert.deepEqual(report.fields.policy_type.evidence, evidence);
+  const verified = applyRating({ ...extraction, fields: { policy_type: { ...decision, reason: "manual_source_verification" } } });
+  assert.equal(verified.fields.policy_type.value, decision.value);
 });

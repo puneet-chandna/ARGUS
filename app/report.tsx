@@ -4,7 +4,7 @@ import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import { commissionLabel, type Preferences } from "../lib/profile-settings";
 import { ExportButton } from "./profile-export-button";
 import { readerNotice } from "./ocr";
-import { confirmationError, conflictFields, requiredReviewFields } from "../lib/review-fields";
+import { confirmationError, conflictFields, previousPolicySource, requiredReviewFields } from "../lib/review-fields";
 import type { RunProgress } from "../lib/progress";
 import type { GwpPreview } from "../lib/rating/types";
 import "./workspace.css";
@@ -20,6 +20,7 @@ export type Source = {
   reader?: string;
   box?: [number, number, number, number] | null;
   url?: string;
+  scope?: "previous_policy";
 };
 
 type Fact = {
@@ -27,7 +28,8 @@ type Fact = {
   status: string;
   reason: string;
   evidence: Source[];
-  confirmation?: { file: string; page?: number };
+  rejected_evidence?: Source[];
+  confirmation?: { file: string; page?: number; basis?: "previous_policy" };
 };
 
 type Decision = "resolved" | "ambiguous" | "unsupported";
@@ -69,7 +71,7 @@ export type Run = {
   duration_ms?: number | null;
 };
 
-type Clarification = { field: string; value: string; page?: number; source?: string };
+type Clarification = { field: string; value: string; page?: number; source?: string; basis?: "previous_policy" };
 export type ReviewSubmission = { confirmations: Clarification[]; revision: number; guided?: true };
 
 const labels = {
@@ -224,12 +226,16 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
 }) {
   const brokerageRecord = field === "eligible_private_car_gwp";
   const groups = brokerageRecord ? [] : readingGroups(fact?.evidence ?? []);
-  const candidates = groups.flat().filter(source => source.raw && !confirmationError(field, source.raw));
+  const prior = brokerageRecord || field.startsWith("previous_") ? [] :
+    [...(fact?.evidence ?? []), ...(fact?.rejected_evidence ?? [])].filter(source => source.raw && source.page &&
+      previousPolicySource(source) && !confirmationError(field, source.raw));
+  const candidates = groups.flat().filter(source => source.raw && !previousPolicySource(source) && !confirmationError(field, source.raw));
   const suggestion = candidates[0] && candidates.every(source => source.raw?.toLowerCase() === candidates[0].raw?.toLowerCase())
     ? candidates[0] : undefined;
   const [custom, setCustom] = useState(!conflicting || Boolean(draft));
   const [value, setValue] = useState(draft?.value ?? "");
   const [source, setSource] = useState(draft?.source ?? "");
+  const [basis, setBasis] = useState(draft?.basis);
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const answer = value.trim();
@@ -241,7 +247,8 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
     if (!answer || !sourceReady || working) return;
     const error = confirmationError(field, answer);
     setError(error ?? "");
-    if (!error) onConfirm({ field, value: answer, ...(brokerageRecord ? { source: source.trim() } : { page: citedPage }) });
+    if (!error) onConfirm({ field, value: answer, ...(basis && { basis }),
+      ...(brokerageRecord ? { source: source.trim() } : { page: citedPage }) });
   }
 
   return <article className="run-review" data-advanced={advanced} aria-labelledby="review-editor-title">
@@ -255,6 +262,15 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
       : field === "fuel" ? "Use the fuel type printed in the vehicle details."
       : field === "engine_cc" ? "Use the cubic capacity printed in the vehicle details, in cc."
       : "Enter the value shown in the original policy."}</p>
+    {prior.length > 0 && <aside className="run-notice" aria-label="Previous-policy evidence">
+      <p>A previous policy prints this value. Use it only if you confirm it still applies to the current policy.</p>
+      {Array.from(new Map(prior.map(item => [`${item.page}:${item.raw}`, item])).values()).map(item =>
+        <button key={`${item.page}:${item.raw}`} type="button" className="button secondary" disabled={!pages || working}
+          onClick={() => { setValue(item.raw!); setBasis("previous_policy"); setCustom(true); setError(""); openPage(item.page!, item); }}>
+          Use previous-policy value · {item.raw}
+        </button>)}
+      {basis && <p>Confirming this value records your decision to reuse it for the current policy.</p>}
+    </aside>}
     {brokerageRecord && gwpPreview && <GwpNote preview={gwpPreview} pdf={pdf} />}
     <form onSubmit={confirm} className="review-confirmation">
       {conflicting && <div className="review-readings">
@@ -267,7 +283,7 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
               <button className="button secondary" type="button" onClick={() => openPage(source.page!, source)}
                 disabled={!pages || source.page! > pages || working}>View page {source.page}</button>
               <button className="button secondary" type="button"
-                onClick={() => { setValue(source.raw ?? ""); setCustom(true); setError(""); openPage(source.page!, source); }}
+                onClick={() => { setValue(source.raw ?? ""); setBasis(undefined); setCustom(true); setError(""); openPage(source.page!, source); }}
                 disabled={!pages || source.page! > pages || working || Boolean(confirmationError(field, source.raw!))}>
                 Use reading {index + 1}
               </button>
@@ -283,10 +299,10 @@ function ConfirmField({ field, fact, page, openPage, pages, draft, conflicting, 
       </button>}
       {!conflicting && suggestion?.page && suggestion.page <= pages && <button type="button" className="button secondary"
         disabled={working} onClick={() => {
-          setValue(suggestion.raw ?? ""); setError(""); openPage(suggestion.page!, suggestion);
+          setValue(suggestion.raw ?? ""); setBasis(undefined); setError(""); openPage(suggestion.page!, suggestion);
         }}>Use suggested value · {suggestion.raw}</button>}
       {(custom || brokerageRecord) && <label>{brokerageRecord ? "Eligible GWP in rupees" : "Value from the policy"}
-        <input ref={input} value={value} onChange={event => { setValue(event.target.value); setError(""); }}
+        <input ref={input} value={value} onChange={event => { setValue(event.target.value); setBasis(undefined); setError(""); }}
           maxLength={220} required disabled={working} />
       </label>}
       {custom && field.endsWith("_date") && <p>Use YYYY-MM-DD.</p>}
@@ -324,18 +340,25 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
   const [badImage, setBadImage] = useState<number>();
   const [discovered, setDiscovered] = useState<string[] | null>(null);
   const [checking, setChecking] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [lastConfirmed, setLastConfirmed] = useState("");
+  const preview = useRef<AbortController | null>(null);
+  const saving = useRef(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const viewer = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLDivElement>(null);
-  const recalculate = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
   const picker = useRef<HTMLSelectElement>(null);
   const queue = [...new Set([...fields, ...Object.keys(drafts), ...(discovered ?? [])])];
   const field = queue.includes(selection) ? selection : queue[0];
-  const pending = (discovered ?? required).filter(name => !drafts[name]);
+  const pending = discovered ?? required.filter(name => !drafts[name]);
   const busy = working || checking;
   const answers = Object.values(drafts);
+  const uncheckedConflicts = conflicts.some(name => !drafts[name]);
+  const canSave = checked && answers.length > 0;
+  const ready = canSave && pending.length === 0 && !uncheckedConflicts;
+  const partial = canSave && !ready;
+  const savingLabel = partial ? "Saving confirmed details…" : "Recalculating commission…";
   const fieldConflicts = new Set<string>(conflictFields(report));
   const annotations = fieldConflicts.has(field) ? readingGroups(report.fields[field]?.evidence ?? []) : [];
   const currentPage = pages ? Math.min(page, pages) : page;
@@ -344,6 +367,7 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
   useEffect(() => {
     if (dialog.current && !dialog.current.open) dialog.current.showModal();
     picker.current?.focus();
+    return () => preview.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -379,56 +403,76 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
   }
 
   async function checkRemaining(confirmations = answers) {
+    if (preview.current || saving.current) return;
+    const controller = new AbortController();
+    preview.current = controller;
     setError("");
+    setChecked(false);
     setChecking(true);
     try {
       const response = await fetch(`/api/runs/${run.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirmations, revision: run.revision, preview: true }),
+        signal: controller.signal,
       });
       const result = await response.json();
+      if (controller.signal.aborted) return;
       if (!response.ok || !Array.isArray(result.remaining)) {
         throw new Error(result.error || "Could not check the remaining details.");
       }
       const next = result.remaining as string[];
       setDiscovered(next);
-      if (next.length) {
-        selectField(next[0]);
+      setChecked(true);
+      const nextField = next[0] ?? conflicts.find(name => !confirmations.some(answer => answer.field === name));
+      if (nextField) {
+        selectField(nextField);
         requestAnimationFrame(() => picker.current?.focus());
         return;
       }
-      setReady(true);
-      requestAnimationFrame(() => recalculate.current?.focus());
+      requestAnimationFrame(() => saveButton.current?.focus());
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not check the remaining details.");
+      if (!controller.signal.aborted) {
+        setError(error instanceof Error ? error.message : "Could not check the remaining details.");
+      }
     } finally {
-      setChecking(false);
+      preview.current = null;
+      if (!controller.signal.aborted) setChecking(false);
     }
   }
 
   function confirm(answer: Clarification) {
+    if (working || preview.current || saving.current) return;
     onDraft(answer);
-    setReady(false);
     setLastConfirmed(fieldName(answer.field));
     void checkRemaining(Object.values({ ...drafts, [answer.field]: answer }));
   }
 
   async function submit() {
-    if (!ready || pending.length || !answers.length || busy) return;
+    if (!canSave || busy || preview.current || saving.current) return;
+    saving.current = true;
     setError("");
     try {
-      await onConfirm({ confirmations: answers, revision: run.revision, guided: true });
+      await onConfirm({ confirmations: answers, revision: run.revision, ...(ready && { guided: true }) });
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not save the review. Try again.");
+    } finally {
+      saving.current = false;
     }
   }
 
   return <dialog ref={dialog} className="review-desk" aria-labelledby="review-title" onClose={onClose}
-    onCancel={event => { if (busy) event.preventDefault(); }}>
+    onCancel={event => {
+      if (working || saving.current) event.preventDefault();
+      else preview.current?.abort();
+    }}>
     <header className="review-header">
       <div><h2 id="review-title">{conflicts.length ? "Resolve OCR conflicts" : "Verify policy details"}</h2>
         <p>{run.display_name || run.filename}</p></div>
-      <button className="button secondary" type="button" disabled={busy} onClick={() => dialog.current?.close()}>
+      <button className="button secondary" type="button" disabled={working} onClick={() => {
+        if (saving.current) return;
+        preview.current?.abort();
+        dialog.current?.close();
+      }}>
         Back to report
       </button>
     </header>
@@ -478,16 +522,18 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
       <div>
         <p role="status">
           {lastConfirmed && <strong key={lastConfirmed} className="review-step-done">{lastConfirmed} confirmed. </strong>}
-          {working ? "Recalculating commission…" : checking ? "Checking what’s still needed…" : ready ? "Ready to recalculate."
+          {working ? savingLabel
+            : checking ? "Checking what’s still needed…" : ready ? "Ready to recalculate."
+            : checked && uncheckedConflicts ? "You can save confirmed details while the other readings remain in review."
             : pending.length === 1 ? "One detail remaining." : pending.length ? `${pending.length} details remaining.` : ""}
         </p>
         {error && <p className="error" role="alert">{error}</p>}
       </div>
-      {!ready && !pending.length && answers.length > 0 && !checking && <button type="button" className="button secondary"
+      {!checked && answers.length > 0 && !busy && <button type="button" className="button secondary"
         onClick={() => void checkRemaining()}>Check remaining details</button>}
-      <button ref={recalculate} type="button" className="button primary" disabled={busy || !ready || !answers.length || pending.length > 0} onClick={submit}>
+      <button ref={saveButton} type="button" className="button primary" disabled={busy || !canSave} onClick={submit}>
         {working && <span className="review-spinner" aria-hidden="true" />}
-        {working ? "Recalculating…" : "Recalculate commission"}
+        {working ? savingLabel : partial ? "Save confirmed details" : "Recalculate commission"}
       </button>
     </footer>
   </dialog>;
@@ -512,7 +558,8 @@ function Facts({ entries, pdf }: { entries: [string, Fact][]; pdf: string }) {
     <dt>{fieldName(field)}</dt>
     <dd>
       {fact.value != null ? <strong>{fact.value}</strong> : factReason(fact.reason)}
-      {fact.confirmation && <p className="run-source-note">{fact.confirmation.page ? "Reviewer confirmed on " : "Reviewer source · "}
+      {fact.confirmation && <p className="run-source-note">{fact.confirmation.basis === "previous_policy"
+        ? "Reviewer confirmed previous-policy value for current policy · " : fact.confirmation.page ? "Reviewer confirmed on " : "Reviewer source · "}
         <Citation source={fact.confirmation} pdf={pdf} /></p>}
       <Sources items={fact.evidence} pdf={pdf} />
     </dd>
@@ -674,7 +721,9 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
           await onConfirm(value);
           setDrafts({});
           setReviewQueue([]);
-          setConfirmationMessage("Review saved. Commission recalculated.");
+          setConfirmationMessage(value.guided
+            ? "Review saved. Commission recalculated."
+            : "Confirmed details saved.");
           requestAnimationFrame(() => document.getElementById("result")?.focus());
         }} />}
 

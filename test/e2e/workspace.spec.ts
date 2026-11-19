@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
-import { decide, type PageRead } from "../../lib/ingestion/facts.ts";
+import { decide, type FieldDecision, type PageRead } from "../../lib/ingestion/facts.ts";
 import { applyRating } from "../../lib/report.ts";
 import { runStore } from "../../lib/runs.ts";
 import { checksum, pdfObject } from "../../lib/upload.ts";
@@ -65,21 +65,30 @@ test("the original Tata classification stays unresolved and its evidence and PDF
   const pdf = await readFile(new URL(`../../vaatun-starter-bundle/sample-policies/${name}`, import.meta.url));
   const fixture = JSON.parse(await readFile(new URL("../../submission/pvt-car-satp-tata-aig.json", import.meta.url), "utf8"));
   // Reuse the source-reviewed observations without inventing a printed vehicle class.
+  const insurer = fixture.fields.insurer;
   const seeded = await reviewer.db.from("argus_ocr_cache").insert({
     owner_id: reviewer.id, checksum: checksum(pdf), profile: verifiedOcrProfile(), grounded_text: [],
     extraction: { filename: name, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
-      reader_failures: {}, clarifications: [], fields: fixture.fields },
+      reader_failures: {}, clarifications: [], fields: { ...fixture.fields,
+        insurer: { ...insurer, value: null, status: "needs_review", reason: "insufficient_agreement" },
+      } },
   });
   expect(seeded.error).toBeNull();
   await page.goto("/sign-in");
   await signIn(page, reviewer);
   await uploadPdf(page, name, pdf);
   const commission = page.getByRole("region", { name: "Broker commission" });
+  await page.getByRole("button", { name: "Insurer", exact: true }).click();
+  const review = page.getByRole("dialog");
+  await expect(review.getByRole("img", { name: `Page 1 of ${name}`, exact: true })).toBeVisible();
+  await review.getByRole("textbox", { name: "Value from the policy" }).fill(insurer.value);
+  await review.getByRole("button", { name: "Confirm value" }).click();
+  await review.getByRole("button", { name: "Save confirmed details" }).click();
+  await expect(page.getByText("Confirmed details saved.")).toBeVisible();
   await expect(commission).toContainText("Confirm whether the policy is for a private car");
   await expect(commission).toContainText("Inapplicable");
   await expect(commission).toContainText("Undetermined");
   await page.getByRole("button", { name: "Vehicle class", exact: true }).click();
-  const review = page.getByRole("dialog");
   await expect(review.getByRole("textbox", { name: "Value from the policy" })).toBeEmpty();
   await expect(review.getByRole("img", { name: /Page 4 of pvt-car-satp-tata-aig.pdf/i })).toBeVisible();
   await expect(review.getByRole("button", { name: /Use suggested value/ })).toHaveCount(0);
@@ -103,6 +112,9 @@ test("the original Tata classification stays unresolved and its evidence and PDF
   expect(original.status()).toBe(200);
   expect(checksum(await original.body())).toBe(checksum(pdf));
   const saved = await page.request.get(pdfUrl!.replace(/\/pdf$/, "")).then(response => response.json());
+  expect(saved.run.result.fields.insurer).toMatchObject({
+    status: "confirmed_by_reviewer", confirmation: { file: name, page: 1 }, evidence: insurer.evidence,
+  });
   expect(saved.run.result.fields.vehicle_class.value).toBeNull();
   expect(saved.run.result.fields.vehicle_class.evidence.map((source: { page: number }) => source.page)).toEqual(expect.arrayContaining([4, 7]));
   const legacy = { ...saved.run.result, status: "unsupported", tp: {
@@ -121,23 +133,25 @@ test("the original Tata classification stays unresolved and its evidence and PDF
   expect(stored.data?.revision).toBe(saved.run.revision + 1);
 });
 
-test("an unseen HDFC package can finish OD with eligible GWP and its own source", async ({ page, reviewer }) => {
+test("an unseen HDFC package saves its confirmed title before eligible GWP is available", async ({ page, reviewer }) => {
   const name = "unseen-hdfc.pdf";
   const insurer = "HDFC ERGO General Insurance Company Limited";
   const title = "Private Car Comprehensive Policy";
   const premium = "Net Premium 75000";
   const start = "Policy start date: 25-Feb-2026";
-  const lines = [insurer, title, "Registration No: MH-12-AB-0123", "Less: No Claim Bonus (20%)", premium, start];
-  const pdf = syntheticPdf(...lines);
-  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
-    reader, page: 1, model: "test", transcript: lines.join("\n"),
-    candidates: [
-      { field: "insurer", value: insurer, quote: insurer, box: null },
-      { field: "policy_type", value: title, quote: title, box: null },
-      { field: "net_premium", value: "75000", quote: premium, box: null },
-      { field: "start_date", value: "25-Feb-2026", quote: start, box: null },
-    ],
-  }));
+  const inputs: PageRead["candidates"] = [
+    { field: "insurer", value: insurer, quote: insurer, box: null },
+    { field: "policy_type", value: title, quote: title, box: null },
+    { field: "rto", value: "MH12", quote: "Registration No: MH-12-AB-0123", box: null },
+    { field: "current_ncb", value: "20", quote: "Less: No Claim Bonus (20%)", box: null },
+    { field: "net_premium", value: "75000", quote: premium, box: null },
+    { field: "start_date", value: "25-Feb-2026", quote: start, box: null },
+  ];
+  const pdf = syntheticPdf(...inputs.map(input => input.quote));
+  const reads: PageRead[] = inputs.flatMap((candidate, index) => (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, page: index + 1, model: "test", transcript: candidate.quote,
+    candidates: candidate.field === "policy_type" && reader === "nvidia-super-vl" ? [] : [candidate],
+  })));
   const seed = await reviewer.db.from("argus_ocr_cache").insert({
     owner_id: reviewer.id, checksum: checksum(pdf), profile: verifiedOcrProfile(), grounded_text: [],
     extraction: { filename: name, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
@@ -147,9 +161,55 @@ test("an unseen HDFC package can finish OD with eligible GWP and its own source"
   await page.goto("/sign-in");
   await signIn(page, reviewer);
   await uploadPdf(page, name, pdf);
+  const id = new URL(page.url()).hash.slice(1);
+  const store = runStore(reviewer.db, reviewer.id);
+  const initial = await store.get(id);
+  expect(initial.pages_total).toBe(inputs.length);
+  const invalidPage = await page.request.patch(`/api/runs/${id}`, {
+    headers: { Origin: new URL(page.url()).origin },
+    data: { revision: initial.revision, preview: true,
+      confirmations: [{ field: "policy_type", value: title, page: initial.pages_total! + 1 }],
+    },
+  });
+  expect(invalidPage.status()).toBe(400);
+  await page.getByRole("button", { name: "Policy type", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("img", { name: `Page 2 of ${name}`, exact: true })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Value from the policy" }).fill(title);
+  const release = Promise.withResolvers<void>();
+  const intercepted = Promise.withResolvers<void>();
+  await page.route(`**/api/runs/${id}`, async route => {
+    intercepted.resolve();
+    await release.promise;
+    await route.abort();
+  }, { times: 1 });
+  try {
+    await dialog.getByRole("button", { name: "Confirm value" }).click();
+    await intercepted.promise;
+    await expect(dialog.getByRole("status")).toContainText("Checking what’s still needed");
+    await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  } finally {
+    release.resolve();
+  }
+  await page.getByRole("button", { name: "Policy type", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Check remaining details" }).click();
+  await dialog.getByRole("button", { name: "Save confirmed details" }).click();
+  await expect(page.getByText("Confirmed details saved.")).toBeVisible();
+  await page.reload();
+  const commission = page.getByRole("region", { name: "Broker commission" });
+  await expect(commission).toContainText("Undetermined");
+  const partial = await store.get(id);
+  expect(partial.revision).toBe(initial.revision + 1);
+  expect(partial.result).toMatchObject({ status: "ambiguous", od: { rate: null }, tp: { rate: null },
+    review_fields: ["eligible_private_car_gwp"], fields: {
+      policy_type: { status: "confirmed_by_reviewer", confirmation: { file: name, page: 2 } },
+    },
+  });
   await expect(page.getByRole("region", { name: "One policy detail to review" })).toContainText("Eligible private-car GWP");
   await page.getByRole("button", { name: "Eligible private-car GWP", exact: true }).click();
-  const dialog = page.getByRole("dialog");
   const note = dialog.getByRole("complementary", { name: "Conditional OD estimate" });
   await expect(note).toContainText("₹75,000");
   await expect(note).toContainText("21% OD");
@@ -161,14 +221,11 @@ test("an unseen HDFC package can finish OD with eligible GWP and its own source"
   await dialog.getByRole("textbox", { name: "GWP source" }).fill("March private-car GWP ledger");
   await dialog.getByRole("button", { name: "Confirm value" }).click();
   await dialog.getByRole("button", { name: "Recalculate commission" }).click();
-  const commission = page.getByRole("region", { name: "Broker commission" });
   await expect(commission).toContainText("19.5%");
   await expect(commission).toContainText("Unsupported");
   await page.getByRole("tab", { name: /Policy facts/ }).click();
   await expect(page.getByRole("tabpanel", { name: /Policy facts/ })).toContainText("March private-car GWP ledger");
 
-  const id = new URL(page.url()).hash.slice(1);
-  const store = runStore(reviewer.db, reviewer.id);
   const saved = (await store.get(id)).result!;
   const gwp = saved.fields.eligible_private_car_gwp;
   const legacy = { ...saved, fields: { ...saved.fields, eligible_private_car_gwp: {
@@ -215,14 +272,29 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   expect(error).toBeNull();
   const pdfUrl = `/api/runs/${data!.id}/pdf`;
   expect((await page.request.get(pdfUrl)).status()).toBe(200);
-  const result = applyRating({ ...data!.result, fields: decide(name, sources), reader_failures: {} });
+  const fields = decide(name, sources);
+  fields.rto = { ...fields.rto, value: null, status: "needs_review", reason: "insufficient_agreement" };
+  const result = applyRating({ ...data!.result, fields, reader_failures: {} });
   const update = await reviewer.db.from("argus_runs")
-    .update({ result })
+    .update({ result, pages_total: null })
     .eq("id", data!.id).eq("owner_id", reviewer.id);
   expect(update.error).toBeNull();
   await page.reload();
-  await page.getByRole("button", { name: "Resolve OCR conflicts" }).click();
+  await page.getByRole("button", { name: "RTO", exact: true }).click();
   const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("img", { name: `Page 4 of ${name}`, exact: true })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Value from the policy" }).fill("UP78");
+  await dialog.getByRole("button", { name: "Confirm value" }).click();
+  await dialog.getByRole("button", { name: "Save confirmed details" }).click();
+  await expect(page.getByText("Confirmed details saved.")).toBeVisible();
+  const partial = await runStore(reviewer.db, reviewer.id).get(data!.id);
+  expect(partial.result).toMatchObject({ status: "ambiguous", tp: { rate: null }, review_fields: ["engine_cc"],
+    fields: { rto: { status: "confirmed_by_reviewer", confirmation: { file: name, page: 4 } },
+      engine_cc: { reason: "conflicting_readings" },
+    },
+  });
+  expect((await page.request.get(pdfUrl)).status()).toBe(200);
+  await page.getByRole("button", { name: "Resolve OCR conflicts" }).click();
   await expect(dialog.getByRole("img", { name: /page 1 of unseen-review-policy.pdf/i })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
   await expect(dialog.getByText("1086", { exact: true })).toBeVisible();
@@ -241,6 +313,7 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   const facts = page.getByRole("tabpanel", { name: /Policy facts/ });
   await expect(facts.getByText("998", { exact: true })).toBeVisible();
   await expect(facts.getByText("Reviewer confirmed on Policy page 1", { exact: true })).toBeVisible();
+  await expect(facts.getByText("Reviewer confirmed on Policy page 4", { exact: true })).toBeVisible();
   expect((await page.request.get(pdfUrl)).status()).toBe(410);
   await expect.poll(async () => {
     const { data, error } = await reviewer.db.from("argus_runs").select("pdf_deleted_at").eq("owner_id", reviewer.id).single();
@@ -457,4 +530,84 @@ test("unavailable readers leave a completed run's OCR retry available", async ({
   const original = await page.request.get(`${path}/pdf`);
   expect(original.ok()).toBe(true);
   expect(await original.body()).toEqual(pdf);
+});
+
+test("a reviewer explicitly reuses previous fuel for the current policy with its provenance", async ({ page, reviewer }) => {
+  const name = "previous-fuel-review.pdf";
+  const inputs = [
+    { field: "insurer", value: "Go Digit General Insurance Ltd.", quote: "Go Digit General Insurance Ltd." },
+    { field: "policy_type", value: "Private Car Liability Only Policy", quote: "Private Car Liability Only Policy" },
+    { field: "rto", value: "UP78", quote: "RTO: UP78" },
+    { field: "start_date", value: "2026-03-25", quote: "Policy Start Date: 2026-03-25" },
+    { field: "engine_cc", value: "1086", quote: "Engine Capacity: 1086 cc" },
+    { field: "fuel", value: "Petrol", quote: "Fuel: Petrol (Previous Policy)" },
+  ] as const;
+  const pdf = syntheticPdf(...inputs.map(input => input.quote));
+  const readings: PageRead[] = inputs.flatMap((input, index) => (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "stub", page: index + 1, transcript: input.quote, candidates: [{ ...input, box: null }],
+  })));
+  const fields = decide(name, readings);
+  expect(fields.fuel.value).toBeNull();
+  expect(fields.fuel.evidence.every(source => source.scope === "previous_policy")).toBe(true);
+  expect((await reviewer.db.from("argus_ocr_cache").insert({ owner_id: reviewer.id, checksum: checksum(pdf),
+    profile: verifiedOcrProfile(), grounded_text: [], extraction: { filename: name, checksum: checksum(pdf),
+      extraction_version: EXTRACTION_VERSION, reader_failures: {}, clarifications: [], fields },
+  })).error).toBeNull();
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await uploadPdf(page, name, pdf);
+  await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("Undetermined");
+  await page.getByRole("button", { name: "Fuel", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("img", { name: `Page 6 of ${name}`, exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Use previous-policy value · Petrol", exact: true }).click();
+  await expect(dialog.getByRole("textbox", { name: "Value from the policy", exact: true })).toHaveValue("Petrol");
+  await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("Undetermined");
+  await dialog.getByRole("button", { name: "Confirm value", exact: true }).click();
+  await dialog.getByRole("button", { name: "Recalculate commission", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("29.5%");
+  const id = new URL(page.url()).hash.slice(1);
+  const saved = await runStore(reviewer.db, reviewer.id).get(id);
+  expect(saved.result?.fields.fuel.confirmation).toMatchObject({ basis: "previous_policy", page: 6, value: "petrol" });
+  expect(saved.result?.confidence.level).toBe("low");
+  expect(saved.result?.fields.fuel.evidence).toEqual(fields.fuel.evidence);
+  expect(saved.result?.trace.some(step => /fuel.*previous.policy.*current.policy/i.test(step.step))).toBe(true);
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("29.5%");
+  expect((await page.request.get(`/api/runs/${id}/pdf`)).status()).toBe(200);
+});
+
+test("saving a verified make retains an unresolved required model conflict", async ({ page, reviewer }) => {
+  const name = "partial-model-review.pdf";
+  const pdf = syntheticPdf("Make: Renault", "Model: KWID", "Private Car Package Policy");
+  const fields: Record<string, FieldDecision> = Object.fromEntries(Object.entries({ insurer: "Reliance", previous_insurer: "Reliance",
+    policy_type: "Private Car Package Policy", rto: "MH01", start_date: "2026-01-15", engine_cc: "999", fuel: "petrol",
+  }).map(([field, value]) => [field, { value, status: "accepted", reason: "source_verified", evidence: [] }]));
+  fields.make = { value: null, status: "needs_review", reason: "insufficient_agreement", evidence: [
+    { file: name, page: 1, reader: "nvidia-super-vl", model: "stub", raw: "Renault", quote: "Make: Renault", box: null },
+  ] };
+  fields.model = { value: null, status: "needs_review", reason: "conflicting_readings", evidence:
+    (["sarvam", "nvidia-super-vl"] as const).map((reader, index) => ({ file: name, page: 2, reader, model: "stub",
+      raw: index ? "TRIBER" : "KWID", quote: index ? "Model: TRIBER" : "Model: KWID", box: null })) };
+  expect((await reviewer.db.from("argus_ocr_cache").insert({ owner_id: reviewer.id, checksum: checksum(pdf),
+    profile: verifiedOcrProfile(), grounded_text: [], extraction: { filename: name, checksum: checksum(pdf),
+      extraction_version: EXTRACTION_VERSION, reader_failures: {}, clarifications: [], fields },
+  })).error).toBeNull();
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await uploadPdf(page, name, pdf);
+  await page.getByRole("button", { name: "Make", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("img", { name: `Page 1 of ${name}`, exact: true })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Value from the policy", exact: true }).fill("Renault");
+  await dialog.getByRole("button", { name: "Confirm value", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save confirmed details", exact: true }).click();
+  await expect(page.getByText("Confirmed details saved.", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Model", exact: true })).toBeVisible();
+  const saved = await runStore(reviewer.db, reviewer.id).get(new URL(page.url()).hash.slice(1));
+  expect(saved.result?.fields.make.status).toBe("confirmed_by_reviewer");
+  expect(saved.result?.fields.model.reason).toBe("conflicting_readings");
+  expect(saved.result?.od.rate).toBeNull();
+  expect(saved.result?.status).toBe("ambiguous");
 });

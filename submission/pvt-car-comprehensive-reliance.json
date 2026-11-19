@@ -567,7 +567,7 @@
     }
   ],
   "status": "ambiguous",
-  "rule_version": "ts1-5a79a3ea91c8efa6-reliance-v5",
+  "rule_version": "ts1-5a79a3ea91c8efa6-reliance-v5-evidence-v3",
   "business_type": "renewal",
   "confidence": {
     "level": "low",

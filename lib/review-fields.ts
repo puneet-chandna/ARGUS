@@ -21,6 +21,10 @@ export function conflictFields(report: { fields: Record<string, ReviewFact> }) {
   });
 }
 
+export function previousPolicySource(source: { scope?: string; quote?: string }) {
+  return source.scope === "previous_policy" || /\b(?:previous|prior|expiring)\b|\bold\s+(?:policy|insurance|insurer|cover(?:age)?)\b/i.test(source.quote ?? "");
+}
+
 export function confirmationError(field: string, value: string) {
   const normalized = canonical(field, value);
   if (!normalized) return "Enter a valid value from the selected policy page.";

@@ -22,7 +22,7 @@ function insurerName(value = "") {
   return (Object.keys(aliases) as (keyof typeof aliases)[]).find(key => aliases[key].includes(name)) ?? name;
 }
 
-export function rate(facts: Facts): RatingResult {
+export function rate(facts: Facts, pendingDates: readonly string[] = []): RatingResult {
   const insurer = insurerName(facts.insurer);
   const previous = insurerName(facts.previous_insurer);
   const kind = policyCoverage(facts.policy_type);
@@ -44,7 +44,18 @@ export function rate(facts: Facts): RatingResult {
   const startDate = policyStartDate(policy.start_date);
   const endDate = policyStartDate(policy.end_date);
   let parts: Parts;
-  if (!kind || !insurer) {
+  if (pendingDates.length || (startDate && endDate && startDate >= endDate)) {
+    const reason = pendingDates.length
+      ? "The extracted coverage period was invalid. Confirm both policy dates before selecting a rate."
+      : "The policy start date must be before its end date. Confirm both dates before selecting a rate.";
+    const dates = pendingDates.length ? pendingDates : ["start_date", "end_date"];
+    parts = {
+      od: component("ambiguous", reason, null, kind ? kind !== "satp" : null),
+      tp: component("ambiguous", reason, null, kind ? kind !== "saod" : null),
+      trace: [{ step: reason, sources: [], policy_fields: dates }],
+      review_fields: dates,
+    };
+  } else if (!kind || !insurer) {
     const detail = kind ? "insurer" : insurer ? "policy type" : "policy type and insurer";
     const reason = `Confirm the ${detail} from the policy schedule.`;
     parts = {
@@ -52,14 +63,6 @@ export function rate(facts: Facts): RatingResult {
       tp: component("ambiguous", reason, null, kind ? kind !== "saod" : null),
       trace: [{ step: reason, sources: [] }],
       review_fields: [...(!kind ? ["policy_type"] : []), ...(!insurer ? ["insurer"] : [])],
-    };
-  } else if (startDate && endDate && startDate >= endDate) {
-    const reason = "The policy start date must be before its end date. Confirm both dates before selecting a rate.";
-    const dates = ["start_date", "end_date"];
-    parts = {
-      od: component("ambiguous", reason), tp: component("ambiguous", reason),
-      trace: [{ step: reason, sources: [], policy_fields: dates }],
-      review_fields: dates,
     };
   } else if (Object.hasOwn(engines, insurer)) {
     parts = engines[insurer as keyof typeof engines](policy);
@@ -89,10 +92,10 @@ export function rate(facts: Facts): RatingResult {
     ];
   });
   return {
-    ...parts, blockers, status, rule_version: insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v5` :
+    ...parts, blockers, status, rule_version: (insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v6` :
       insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v7` :
       insurer === "godigit" ? `${RATE_CARD_VERSION}-digit-age-v4` :
-      insurer === "reliance-indusind" ? `${RATE_CARD_VERSION}-reliance-v5` : RATE_CARD_VERSION,
+      insurer === "reliance-indusind" ? `${RATE_CARD_VERSION}-reliance-v5` : RATE_CARD_VERSION) + "-evidence-v3",
     business_type: businessType || null,
     confidence: status === "ambiguous" ? { level: "low", reason: "At least one applicable rate is undetermined." } :
       { level: "high", reason: "The supplied source evidence establishes the rate or coverage decision." },

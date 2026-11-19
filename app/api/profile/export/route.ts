@@ -2,7 +2,7 @@ import { endpoint, HttpError, readJson } from "../../../../lib/http.ts";
 import { accountSettings, activityFilters, eventsQuery, profileStore } from "../../../../lib/profile.ts";
 import { csv, zip } from "../../../../lib/profile-export.ts";
 import { auditActions, type AuditEvent } from "../../../../lib/profile-settings.ts";
-import { present, runStore } from "../../../../lib/runs.ts";
+import { present, runStore, type StoredRun } from "../../../../lib/runs.ts";
 import { reviewer, serviceClient } from "../../../../lib/supabase.ts";
 
 async function all<T>(page: (start: number, end: number) => PromiseLike<{data: T[] | null; error: unknown}>) {
@@ -24,12 +24,13 @@ export const POST = endpoint(async (request) => {
   const { auth, user } = await reviewer();
   const input = await readJson(request);
   const service = serviceClient();
+  const store = runStore(service, user.id);
   const audit = profileStore(service, user.id);
   const headers = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
   if (input.type === "run") {
     if (typeof input.runId !== "string") throw new HttpError(404, "Run not found.");
-    const run = await runStore(service, user.id).get(input.runId);
-    if (run.deleting_at || !run.result) throw new HttpError(409, "Only completed runs can be exported.");
+    const run = await store.refreshDecision(await store.get(input.runId));
+    if (run.deleting_at || run.status !== "complete" || !run.result) throw new HttpError(409, "Only completed runs can be exported.");
     await audit.logExport(run.display_name ?? run.filename, "exported");
     return new Response(JSON.stringify(present(run), null, 2), { headers: { ...headers, "Content-Type": "application/json" } });
   }
@@ -47,12 +48,16 @@ export const POST = endpoint(async (request) => {
     await audit.logExport("Activity CSV", "exported_activity");
     return new Response(activity, { headers: { ...headers, "Content-Type": "text/csv; charset=utf-8" } });
   }
-  const [settings, photo, runs] = await Promise.all([
+  const [settings, photo, savedRuns] = await Promise.all([
     accountSettings(auth, user), profileStore(auth, user.id).avatar(),
-    all((a, b) => auth.from("argus_runs")
-      .select("id,filename,display_name,created_at,status,result,ocr_mode,pdf_deleted_at").eq("owner_id", user.id)
+    all<StoredRun>((a, b) => auth.from("argus_runs").select("*").eq("owner_id", user.id)
       .lte("created_at", until).is("deleting_at", null).order("created_at").order("id").range(a, b)),
   ]);
+  const runs = [];
+  for (const saved of savedRuns) {
+    const { id, filename, display_name, created_at, status, result, ocr_mode, pdf_deleted_at } = await store.refreshDecision(saved);
+    runs.push({ id, filename, display_name, created_at, status, result, ocr_mode, pdf_deleted_at });
+  }
   const archive = zip({
     "argus.json": JSON.stringify({ ...settings, photo, memberSince: user.created_at, runs, activity: events }, null, 2),
     "activity.csv": activity,

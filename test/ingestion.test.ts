@@ -400,6 +400,107 @@ test("an inline previous policy reference does not start a section", () => {
   assert.equal(grounded(start, `Previous Policy Details:\n${quote}`), false);
 });
 
+test("a previous policy number anchors the previous insurer and current headings reset the role", () => {
+  const value = "TATA AIG GENERAL INSURANCE CO. LTD.";
+  const quote = `Name of the Insurer: ${value}`;
+  const prior = `Previous Policy No: P123\n${quote}`;
+  const candidates: Candidate[] = (["insurer", "previous_insurer"] as const).map(field => ({
+    field, value, quote, box: null,
+  }));
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 1, transcript: prior, candidates,
+  }));
+  const previous = decide("unseen.pdf", reads);
+  assert.equal(previous.insurer.value, null);
+  assert.equal(previous.previous_insurer.value, value.toLowerCase());
+  const current = decide("unseen.pdf", reads.map(reading => ({
+    ...reading, transcript: `Previous Policy No: P123\nCurrent Policy Details\n${quote}`,
+  })));
+  assert.equal(current.insurer.value, value.toLowerCase());
+  assert.equal(current.previous_insurer.value, null);
+});
+
+test("a previous policy's coverage does not identify current coverage", () => {
+  const prior = "Private Car Package Policy";
+  const current = "Digit Private Car Liability Only Policy";
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 1, transcript: `Previous Policy Details:\nPolicy Type: ${prior}\nCurrent Policy Details:\n${current}`,
+    candidates: [
+      { field: "policy_type", value: prior, quote: `Policy Type: ${prior}`, box: null },
+      { field: "policy_type", value: current, quote: current, box: null },
+    ],
+  }));
+  const result = decide("unseen.pdf", reads).policy_type;
+  assert.equal(result.value, current.toLowerCase());
+  assert.equal(result.rejected_evidence?.length, 2);
+});
+
+test("previous policy sections cannot supply current vehicle, business or premium facts", () => {
+  const old: Candidate[] = [
+    { field: "fuel", value: "Diesel", quote: "Fuel Type: Diesel", box: null },
+    { field: "engine_cc", value: "999", quote: "Engine capacity: 999 cc", box: null },
+    { field: "business_type", value: "Renewal", quote: "Business Type: Renewal", box: null },
+    { field: "net_od_premium", value: "4000", quote: "Net OD Premium: 4000", box: null },
+    { field: "extended_warranty", value: "yes", quote: "Extended Warranty: Included", box: null },
+  ];
+  const current: Candidate = { field: "fuel", value: "Petrol", quote: "Fuel Type: Petrol", box: null };
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 1, transcript: `Previous Policy Details\n${old.map(item => item.quote).join("\n")}`,
+    candidates: old,
+  }));
+  const prior = decide("policy.pdf", reads);
+  for (const candidate of old) assert.equal(prior[candidate.field].value, null, candidate.field);
+  const reset = decide("policy.pdf", reads.map(reading => ({ ...reading,
+    transcript: `${reading.transcript}\nCurrent Policy Details\n${current.quote}`, candidates: [...old, current],
+  })));
+  assert.equal(reset.fuel.value, "petrol");
+});
+
+test("a package premium label does not conflict with the printed policy heading", () => {
+  const heading = "PRIVATE CAR COMPREHENSIVE POLICY";
+  const premium = "Total Package Premium (a+b)";
+  const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "test", page: 1, transcript: `${heading}\n${premium}`,
+    candidates: [
+      { field: "policy_type", value: heading, quote: heading, box: null },
+      { field: "policy_type", value: "Package", quote: premium, box: null },
+    ],
+  }));
+  const result = decide("policy.pdf", reads).policy_type;
+  assert.equal(result.value, heading.toLowerCase());
+  assert.equal(result.rejected_evidence?.length, 2);
+  assert.equal(grounded({ field: "policy_type", value: "Package", quote: "Type of Cover: Package", box: null }, "Type of Cover: Package"), true);
+  const otherTitle = "Comprehensive Motor Insurance Policy";
+  assert.equal(grounded({ field: "policy_type", value: otherTitle, quote: otherTitle, box: null }, otherTitle), true);
+});
+
+test("narrow From and To quotes can use the surrounding policy period rows", () => {
+  const from = "From 25-Mar-2026 00:00:01";
+  const to = "To 24-Mar-2027 23:59:59";
+  const dates: Candidate[] = [
+    { field: "start_date", value: "25-Mar-2026", quote: "From 25-Mar-2026", box: null },
+    { field: "end_date", value: "24-Mar-2027", quote: "To 24-Mar-2027", box: null },
+  ];
+  for (const transcript of [`Period of Policy\n${from}\n${to}`,
+    `Period of Policy ${from} Invoice Date 24-Mar-2026\n${to}`]) {
+    const reads: PageRead[] = [
+      { reader: "nvidia-super-vl", model: "test", page: 1, transcript, candidates: dates },
+      { reader: "sarvam", model: "test", page: 1, transcript: "", quoteOnly: true, candidates: dates },
+    ];
+    const result = decide("policy.pdf", reads);
+    assert.equal(result.start_date.value, "2026-03-25");
+    assert.equal(result.end_date.value, "2027-03-24");
+    assert.equal(decide("policy.pdf", [{ ...reads[0], page: 2 }, reads[1]]).start_date.value, null);
+    for (const candidate of dates) {
+      assert.equal(grounded(candidate, `Previous Policy Details\n${transcript}`), false);
+      assert.equal(grounded(candidate, `Previous Policy Number: P123\n${transcript}`), false);
+      assert.equal(grounded(candidate, `Period of Policy\nInvoice Date: ${candidate.quote}`), false);
+      assert.equal(grounded(candidate, `Period of Policy\nYour Vehicle Details\n${from}\n${to}`), false);
+    }
+    assert.equal(grounded(dates[0], `Period of Insurance for Previous Policy\n${from}`), false);
+  }
+});
+
 test("coverage dates must quote the matching period boundary and cannot borrow an issue date", () => {
   const valid = (field: "start_date" | "end_date", value: string, quote: string) =>
     grounded({ field, value, quote, box: null }, quote);
@@ -411,4 +512,31 @@ test("coverage dates must quote the matching period boundary and cannot borrow a
   assert.equal(valid("end_date", "2027-02-13", "Period of Insurance: From 14/02/2026 To 13/02/2027"), true);
   assert.equal(valid("start_date", "2026-02-14", "Period of Insurance: From 14/02/2026 To 13/02/2027"), true);
   assert.equal(valid("start_date", "2027-02-13", "Period of Insurance: From 14/02/2026 To 13/02/2027"), false);
+});
+
+test("previous-role row labels cannot corroborate current facts even when quotes omit the label", () => {
+  const raw: ReadonlyArray<[Candidate["field"], string, string]> = [
+    ["fuel", "Petrol", "Fuel Type: Petrol"],
+    ["business_type", "Renewal", "Business Type: Renewal"],
+    ["basic_od_premium", "100", "Basic OD Premium: 100"],
+    ["standalone_zd", "Yes", "Standalone ZD: Yes"],
+  ];
+  for (const [field, value, quote] of raw) {
+    for (const labelled of [`Previous ${quote}`, `${quote} (Previous Policy)`]) {
+      for (const fragment of [quote, labelled]) {
+        const reads: PageRead[] = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+          page: 1, reader, model: "test", transcript: labelled, candidates: [{ field, value, quote: fragment, box: null }],
+        }));
+        const decision = decide("policy.pdf", reads)[field];
+        assert.equal(decision.value, null, labelled);
+        assert.ok(decision.evidence.every(source => source.scope === "previous_policy"), labelled);
+        assert.equal(decide("policy.pdf", reads.map(reading => ({
+          ...reading, transcript: quote, candidates: [{ field, value, quote, box: null }],
+        })))[field].value, value.toLowerCase());
+      }
+    }
+  }
+  const ncb = "NCB: 25% (Previous Policy)";
+  assert.ok(grounded({ field: "previous_ncb", value: "25", quote: ncb, box: null }, ncb));
+  assert.ok(grounded({ field: "vehicle_age", value: "2", quote: "Vehicle age: 2 years old", box: null }, "Vehicle age: 2 years old"));
 });

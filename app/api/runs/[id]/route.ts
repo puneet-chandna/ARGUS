@@ -77,11 +77,18 @@ export const PATCH = endpoint(async (request, route: Context) => {
   if (run.status !== "complete" || !run.result || run.revision !== input.revision) {
     throw new HttpError(409, "The result changed. Reload it before confirming a value.");
   }
-  const { pdf } = await store.pdf(id);
-  const pages = await storedPdfPages(new Uint8Array(await pdf.arrayBuffer()));
-  const reviewed = clarifyBatch(run.result, input.confirmations, pages, input.preview === true);
+  if (run.deleting_at) throw new HttpError(410, "This run is being deleted.");
+  if (run.pdf_deleted_at || run.pdf_cleanup_pending) throw new HttpError(410, "The original PDF is unavailable after analysis.");
+  const preview = input.preview === true;
+  // Upload has already inspected these immutable bytes. Older runs may lack the count.
+  let pages = run.pages_total ?? 0;
+  if (!preview || !Number.isInteger(pages) || pages < 1 || pages > 60) {
+    const { pdf } = await store.pdf(id);
+    pages = await storedPdfPages(new Uint8Array(await pdf.arrayBuffer()));
+  }
+  const reviewed = clarifyBatch(run.result, input.confirmations, pages, preview, input.guided !== true);
   const remaining = requiredReviewFields(reviewed);
-  if (input.preview === true) return json({ remaining });
+  if (preview) return json({ remaining });
   if (input.guided === true && remaining.length) {
     throw new HttpError(422, "Confirm the remaining policy details before recalculating.");
   }

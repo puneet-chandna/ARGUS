@@ -1,4 +1,4 @@
-import { policyCoverage, vehicleBodyStyle } from "../rating/types.ts";
+import { policyCoverage, tidy, vehicleBodyStyle } from "../rating/types.ts";
 
 export const FIELDS = [
   "insurer", "previous_insurer", "business_type", "make", "model", "fuel", "rto", "engine_cc",
@@ -20,9 +20,11 @@ export type PageRead = {
 export type Evidence = {
   file: string; page: number; reader: Reader; model: string; raw: string; quote: string; box: Box | null;
   protocol?: string;
+  scope?: "previous_policy";
 };
 export type Confirmation = {
   field: string; raw: string; value: string; page?: number; file: string; type: "reviewer_confirmation";
+  basis?: "previous_policy";
 };
 export type FieldDecision = {
   value: string | null;
@@ -132,7 +134,8 @@ function registrationRto(quote: string) {
 
 const currentNcbLabel = /^(?:less|current|applicable)\s*(?:[:|−-]\s*)?(?:no\s+claim\s+bonus|ncb)\b/i;
 const previousReference = /\b(previous|prior|old|expiring)\b/;
-const currentPolicyFields = new Set(["insurer", "current_ncb", "rto", "start_date", "end_date"]);
+const previousRole = /\b(?:previous|prior|expiring)\b|\bold\s+(?:policy|insurance|insurer|coverage|cover)\b/;
+const currentPolicyFields = new Set<string>(FIELDS.filter(field => !field.startsWith("previous_")));
 
 function previousPolicyLines(lines: string[]) {
   let previous: "section" | "reference" | null = null;
@@ -140,14 +143,16 @@ function previousPolicyLines(lines: string[]) {
     const heading = line.replace(/^[^a-z]*(?:[ivxlcdm]+ [.):\-] +)?/, "");
     if (/^(?:(?:details|information) (?:of|for) (?:the )?)?(?:previous|prior|old|expiring) (?:insurance|insurer|policy)(?: (?:details|information))?(?: \( if applicable \))?[^a-z0-9]*$/.test(heading)) previous = "section";
     else if (!previous && /^(?:previous|prior|old|expiring) policy (?:no|number)\b/.test(heading)) previous = "reference";
-    if (/^(?:(?:current|new|proposed) (?:insurance|policy|vehicle)\b|(?:insured|nominee|proposer|financier|vehicle) (?:details|information)\b)/.test(heading)) previous = null;
+    if (/^(?:(?:current|new|proposed) (?:insurance|policy|vehicle)\b|(?:your )?(?:insured|nominee|proposer|financier|vehicle) (?:details|information)\b|your policy (?:details|information|schedule)\b)/.test(heading)) previous = null;
     return previous;
   });
 }
 
-function isPriorContext(field: Field, marker: ReturnType<typeof previousPolicyLines>[number]) {
-  return marker === "section" ? currentPolicyFields.has(field) :
-    marker === "reference" && (field === "current_ncb" || field === "rto");
+function isPriorContext(field: Field, marker: ReturnType<typeof previousPolicyLines>[number], line: string) {
+  if (!marker || !currentPolicyFields.has(field)) return false;
+  const explicitBoundary = (field === "start_date" || field === "end_date") &&
+    /^\s*(?:\| )?(?:policy|insurance|coverage) (?:start|end|commencement|expiry|expiration) date\b/.test(line);
+  return marker === "section" || !explicitBoundary;
 }
 
 function scheduleCandidates(read: PageRead): Candidate[] {
@@ -196,17 +201,44 @@ function documentHeading(candidate: Candidate) {
     || field === "policy_type" && /\bpolicy\b/.test(comparable(value)) && Boolean(policyCoverage(value));
 }
 
-function coverageDate(field: Field, value: string, quote: string) {
+const policyTypeLabel = /\b(?:policy type|type of (?:policy|cover(?:age)?)|product name|coverage type)\b/;
+const coverageTitle = /\b(?:comprehensive|package|liability only|third party only|satp|sa tp|stp|saod|stand ?alone (?:tp|third party|own damage|od))(?: (?:private|commercial|motor|car|vehicle|insurance))* policy\b/;
+
+export function hasLegacyCurrentRole(field: "insurer" | "policy_type", value: string, quote: string) {
+  const line = comparable(quote);
+  if (/^(?:\| )?(?:current|new|proposed) (?:insurer|insurance|policy)\b/.test(line)) return true;
+  // Older reports saved the row quote without its surrounding section.
+  return field === "insurer" ? legalInsurer(value) && line === comparable(value) :
+    !policyTypeLabel.test(line) && coverageTitle.test(tidy(line));
+}
+
+function policyTypeContext(context: string, value: string) {
+  const coverage = policyCoverage(value);
+  const printed = policyCoverage(context);
+  return Boolean(coverage) && !previousReference.test(context) && !/\bpremium\b/.test(context) &&
+    (policyTypeLabel.test(context) ? !printed || printed === coverage : coverageTitle.test(tidy(context)) && printed === coverage);
+}
+
+const genericCoverage = /^(?:comprehensive|package|satp|sa tp|stp|tp|third party(?: only)?|liability only|stand ?alone (?:tp|third party|own damage|od)|saod)(?: policy)?$/;
+
+const periodHeading = /^\s*(?:\| )?(?:current )?(?:period of (?:policy|insurance|cover(?:age)?)|(?:policy|insurance|cover(?:age)?) period)\b/;
+const periodStartRow = /^\s*(?:\| )?from\b/;
+const periodEndRow = /^\s*(?:\| )?to\b/;
+
+function coverageDate(field: Field, value: string, quote: string, underPeriod = false) {
   const expected = canonical(field, value);
-  if (!expected) return false;
   const text = digits(quote);
-  const dates = [...text.matchAll(/\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}[\s-][a-z]{3,9}[\s-]\d{4})\b/gi)];
-  const period = /\b(?:insurance|policy|cover|coverage|validity|valid)\b/i.test(text);
+  const dates = [...text.matchAll(/\b(?:\d{4}\s*-\s*\d{2}\s*-\s*\d{2}|\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{4}|\d{1,2}[\s-]+[a-z]{3,9}[\s-]+\d{4})\b/gi)];
+  const coverage = /\b(?:insurance|policy|cover|coverage|validity|valid)\b/i;
+  const leadingPeriod = coverage.test(text.slice(0, dates[0]?.index ?? 0));
   return dates.some((date, index) => {
-    if (canonical(field, date[0]) !== expected) return false;
+    const printed = date[0].replace(/\s*([/-])\s*/g, "$1");
+    // A grounded but impossible printed date is retained for review, never accepted as a value.
+    if (expected ? canonical(field, printed) !== expected : comparable(printed) !== comparable(value)) return false;
     const previous = dates[index - 1];
     const label = comparable(text.slice(previous ? previous.index + previous[0].length : 0, date.index));
-    if (/\b(?:issue|issued|issuance|proposal|payment|receipt)\b/.test(label)) return false;
+    if (/\b(?:issue|issued|issuance|invoice|billing|proposal|payment|receipt)\b/.test(label) || previousReference.test(label)) return false;
+    const period = underPeriod || leadingPeriod || coverage.test(label);
     if (field === "start_date") return !/\b(?:expiry|expiration|end|until|to)\b/.test(label) &&
       (/\b(?:start|commencement|inception|effective)\b/.test(label) || period && /\b(?:from|period)\b/.test(label));
     return !/\b(?:start|commencement|inception|from)\b/.test(label) &&
@@ -221,24 +253,39 @@ export function grounded(candidate: Candidate, transcript: string) {
 function groundedOnPage(candidate: Candidate, lines: string[], previousSections = previousPolicyLines(lines)) {
   const { field, quote, value } = candidate;
   const context = comparable(quote);
-  const found = lines.filter((line, index) => !isPriorContext(field, previousSections[index]) &&
-    line.includes(` ${context} `));
+  const found = lines.flatMap((line, index) => !isPriorContext(field, previousSections[index], line) &&
+    (!currentPolicyFields.has(field) || !previousRole.test(line)) &&
+    line.includes(` ${context} `) ? [index] : []);
   if (!context || !found.length) return false;
   if (field === "vehicle_class" && (policyCoverage(value) || vehicleBodyStyle(value))) return false;
+  if (field === "policy_type" && (!policyTypeContext(context, value) ||
+    !found.some(index => policyTypeContext(lines[index], value)))) return false;
   if (comparable(value) === context) {
-    return documentHeading(candidate) && found.some(line => !previousReference.test(line));
+    return documentHeading(candidate) && found.some(index => !previousReference.test(lines[index]));
   }
   const previous = previousReference.test(context);
-  if (field.startsWith("previous_") && !previous && !lines.some((line, index) =>
-    previousSections[index] === "section" && line.includes(` ${context} `) &&
-    (field === "previous_ncb" || /^ (?:\| )?(?:name of (?:the )?insurer|insurer(?: name)?)\b/.test(line)))) return false;
+  if (field.startsWith("previous_") && !previous && !found.some(index => previousSections[index] &&
+    (field === "previous_ncb" || /^ (?:\| )?(?:name of (?:the )?insurer|insurer(?: name)?)\b/.test(lines[index])))) return false;
+  if (field === "insurer" && !found.some(index => !previousReference.test(lines[index]))) return false;
   if (previous && (["insurer", "current_ncb", "policy_type", "start_date", "end_date", "business_type"].includes(field)
     || field.endsWith("_premium"))) return false;
   if (field.endsWith("_ncb") && (!/\b(ncb|no claim bonus)\b/.test(context) ||
     !/(?:%|\b(?:percentage|percent|per cent)\b)/.test(context) || /(?:₹|\b(?:inr|rs|rupees?)\b)/.test(context))) return false;
   const label = LABELS[field];
   if (label && !label.test(context)) return false;
-  if (field === "start_date" || field === "end_date") return coverageDate(field, value, quote);
+  if (field === "start_date" || field === "end_date") return found.some(index => {
+    const line = lines[index];
+    if (previousReference.test(line) || !coverageDate(field, value, quote, true)) return false;
+    if (coverageDate(field, value, line)) return true;
+    const prior = lines[index - 1] ?? "";
+    const heading = (offset: number) => {
+      const label = lines[index - offset] ?? "";
+      return !previousSections[index - offset] && periodHeading.test(label) && !previousReference.test(label);
+    };
+    const continuation = field === "start_date" ? periodStartRow.test(line) && heading(1) :
+      periodEndRow.test(line) && (heading(1) || periodStartRow.test(prior) && heading(2));
+    return continuation && coverageDate(field, value, line, true);
+  });
   if (field.endsWith("_premium")) {
     const basis = field.split("_")[0] as keyof typeof PREMIUM_BASIS;
     if (!/\bpremium\b/.test(context) || !PREMIUM_BASIS[basis].test(context)) return false;
@@ -287,14 +334,20 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
     for (const {page, reader, model, lines, previousSections, candidates, protocol, quoteOnly} of prepared) {
       for (const candidate of candidates) {
         if (candidate.field !== field) continue;
+        const contexts = quoteOnly ? prepared.filter(other => other.page === page && !other.quoteOnly) : [{ lines, previousSections }];
+        const matches = contexts.flatMap(context => context.lines.flatMap((line, index) =>
+          line.includes(` ${comparable(candidate.quote)} `) ? [{ line, marker: context.previousSections[index] }] : []));
+        const prior = currentPolicyFields.has(field) && (previousRole.test(candidate.quote) ||
+          matches.length > 0 && matches.every(({ line, marker }) => isPriorContext(field, marker, line) || previousRole.test(line)));
         const source = {
           file: filename, page, reader, model, raw: candidate.value, quote: candidate.quote, box: candidate.box,
           ...(protocol ? { protocol } : {}),
+          ...(prior && { scope: "previous_policy" as const }),
         };
         const key = JSON.stringify(source);
         const heading = documentHeading(candidate) ? comparable(candidate.value) : "";
         const quote = comparable(candidate.quote);
-        const inPreviousSection = lines.some((line, index) => isPriorContext(field, previousSections[index]) && line.includes(` ${quote} `));
+        const inPreviousSection = lines.some((line, index) => isPriorContext(field, previousSections[index], line) && line.includes(` ${quote} `));
         // An exact heading can share the same-page citation from an independently transcribed match.
         const anchoredHeading = heading && heading === quote && !inPreviousSection &&
           headingAnchors.some(anchor => anchor.field === field && anchor.page === page && anchor.reader !== reader && anchor.value === heading) &&
@@ -331,12 +384,21 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
     const citations = [...(evidence.size ? evidence : rejected).values()]
       .sort((a, b) => a.page - b.page || a.reader.localeCompare(b.reader) || a.raw.localeCompare(b.raw));
     if (field === "policy_type" && observed.size > 1) {
-      const title = [...observed.keys()].reduce((longest, value) => value.length > longest.length ? value : longest);
+      const titles = [...observed.keys()].sort((a, b) => b.length - a.length || a.localeCompare(b));
+      const title = titles[0];
       const full = observed.get(title)!;
       for (const [value, pages] of observed) {
-        if (value === title || policyCoverage(value) !== policyCoverage(title) || !contains(title, value)) continue;
+        if (value === title || policyCoverage(value) !== policyCoverage(title) ||
+          (!contains(title, value) && !genericCoverage.test(tidy(value)))) continue;
         for (const [page, readers] of pages) full.set(page, new Set([...(full.get(page) ?? []), ...readers]));
         observed.delete(value);
+      }
+      if (observed.size === 1) {
+        // Coverage can agree even when only one reader printed the vehicle qualifier.
+        const supported = titles.find(value => genericCoverage.test(tidy(value)) ||
+          new Set(citations.filter(source => contains(source.quote, value)).map(source => source.reader)).size >= 2);
+        observed.delete(title);
+        observed.set(supported ?? policyCoverage(title), full);
       }
     }
     // Matching document headings can be cited on different pages.
@@ -361,7 +423,10 @@ export function decide(filename: string, reads: PageRead[], complete = true): Re
       reason = "invalid_or_ungrounded";
       status = "rejected";
     }
-    decisions.set(field, { value, status, reason, evidence: citations });
+    const retainRejected = ["insurer", "previous_insurer", "policy_type", "start_date", "end_date"].includes(field) ||
+      [...rejected.values()].some(source => source.scope === "previous_policy");
+    decisions.set(field, { value, status, reason, evidence: citations,
+      ...(retainRejected && evidence.size && rejected.size && { rejected_evidence: [...rejected.values()] }) });
   }
 
   const fields = Object.fromEntries(decisions) as Record<Field, FieldDecision>;

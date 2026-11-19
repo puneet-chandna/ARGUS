@@ -456,7 +456,7 @@
     }
   ],
   "status": "resolved",
-  "rule_version": "ts1-5a79a3ea91c8efa6-digit-age-v4",
+  "rule_version": "ts1-5a79a3ea91c8efa6-digit-age-v4-evidence-v3",
   "business_type": "renewal",
   "confidence": {
     "level": "high",

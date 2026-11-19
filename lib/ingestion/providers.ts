@@ -25,7 +25,7 @@ export const READER_LANES = [
   ["nvidia-super-vl"],
 ] as const;
 const PAGE_PROTOCOL = "brokerage-page-v2";
-export const EXTRACTION_VERSION = "brokerage-fields-v5";
+export const EXTRACTION_VERSION = "brokerage-fields-v7";
 export const TARGETED_PROTOCOL = "brokerage-targeted-page-v1";
 
 const FIELD_DISTINCTIONS: Partial<Record<Field, string>> = {

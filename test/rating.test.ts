@@ -391,6 +391,98 @@ test("Tata AIG withholds TP when RTO jurisdiction contradicts the policy locatio
   assert.equal(rate({ ...facts, rto: "HR26", rto_location: "Haryana" }).tp.rate, "0");
 });
 
+test("Tata AIG checks the state of each named city payout column against the RTO code", () => {
+  const facts = {
+    insurer: "Tata AIG", previous_insurer: "Tata AIG", policy_type: "Private Car SATP",
+    fuel: "petrol", start_date: "2026-03-01",
+  };
+  for (const [rto_location, cell] of [
+    ["Mumbai", "AL5"], ["Bengaluru", "O5"], ["Ahmedabad", "M5"], ["Bhubaneswar", "P5"], ["Chennai", "T5"],
+    ["Coimbatore", "U5"], ["Hyderabad", "Z5"], ["Indore", "AA5"], ["Jaipur", "AC5"],
+    ["Kolkata", "AH5"], ["Nagpur", "AM5"], ["Pune", "AP5"],
+    ["Rajkot", "AQ5"], ["Surat", "BF5"], ["Vadodara", "BL5"], ["Vijayawada", "BM5"], ["Visakhapatnam", "BN5"],
+  ]) {
+    const result = rate({ ...facts, rto: rto_location === "Bengaluru" ? "MH01" : "KA01", rto_location });
+    assert.deepEqual([result.od.applicable, result.tp.status, result.tp.rate, result.review_fields],
+      [false, "ambiguous", null, ["rto", "rto_location"]], rto_location);
+    const blocker = result.blockers[0];
+    assert.ok(blocker.sources.some(item => item.url?.startsWith("https://morth.gov.in/")), rto_location);
+    assert.ok(blocker.sources.some(item => item.url?.startsWith("https://static.pib.gov.in/") ||
+      item.url === "https://vadodara.nic.in/about-district/"), rto_location);
+    assertSource(result, "Pvtcar", cell);
+  }
+  for (const [rto, rto_location, percentage, cell] of [
+    ["KA01", "Bangalore", "0", "O5"], ["KA01", "Bengaluru", "0", "O5"], ["MH01", "Mumbai", "38", "AL5"],
+    ["MH01", "Bombay", "38", "AL5"],
+  ]) {
+    const result = rate({ ...facts, rto, rto_location });
+    assert.equal(result.tp.rate, percentage, rto_location);
+    assertSource(result, "Pvtcar", cell);
+  }
+  for (const [rto, rto_location] of [["OD02", "Mumbai"], ["TG09", "Mumbai"], ["TS09", "Mumbai"],
+    ["KA01", "Telengana"], ["KA01", "Maharashtra"]]) {
+    const result = rate({ ...facts, rto, rto_location });
+    assert.deepEqual([result.tp.status, result.tp.rate, result.review_fields],
+      ["ambiguous", null, ["rto", "rto_location"]], rto);
+  }
+  for (const rto_location of ["Karnataka", "Aurangabad", "Delhi NCR"]) {
+    const result = rate({ ...facts, rto: "KA01", rto_location });
+    assert.deepEqual([result.tp.status, result.tp.rate], ["unsupported", null], rto_location);
+    assertSource(result, "Pvtcar", "M5:BO5");
+  }
+  assertSource(rate({ ...facts, rto: "KA01", rto_location: "KA1" }), "Pvtcar", "AE5");
+});
+
+test("Tata AIG withholds TP for contradictory named offices within the same state", () => {
+  const facts = {
+    insurer: "Tata AIG", previous_insurer: "Tata AIG", policy_type: "Private Car SATP",
+    fuel: "petrol", start_date: "2026-03-01",
+  };
+  for (const [rto, rto_location, cell, domain] of [
+    ["MH01", "Pune", "AP5", "transport.maharashtra.gov.in"],
+    ["MH-12", "Mumbai", "AL5", "transport.maharashtra.gov.in"],
+    ["MH31", "Mumbai", "AL5", "transport.maharashtra.gov.in"],
+    ["KA09", "Bengaluru", "O5", "cag.gov.in"],
+    ["KA55", "Bangalore", "O5", "cag.gov.in"],
+    ["TN01", "Coimbatore", "U5", "tnsta.gov.in"],
+    ["TN37", "Chennai", "T5", "tnsta.gov.in"],
+  ]) {
+    const result = rate({ ...facts, rto, rto_location });
+    assert.deepEqual([result.tp.status, result.tp.rate, result.review_fields],
+      ["ambiguous", null, ["rto", "rto_location"]], `${rto} / ${rto_location}`);
+    assert.ok(result.blockers[0].sources.some(source => source.url?.startsWith(`https://${domain}/`) &&
+      source.row?.includes(rto.replace("-", ""))));
+    assertSource(result, "Pvtcar", cell);
+  }
+  for (const [rto, rto_location, cell] of [
+    ["MH01", "Mumbai", "AL5"], ["MH12", "Pune", "AP5"], ["KA01", "Bangalore", "O5"], ["TN37", "Coimbatore", "U5"],
+  ]) {
+    const result = rate({ ...facts, rto, rto_location });
+    assert.equal(result.tp.status, "resolved");
+    assertSource(result, "Pvtcar", cell);
+  }
+});
+
+test("Tata AIG withholds city TP when the supplied RTO code has no verified match", () => {
+  const facts = {
+    insurer: "Tata AIG", previous_insurer: "Tata AIG", policy_type: "Private Car SATP",
+    fuel: "petrol", start_date: "2026-03-01",
+  };
+  for (const [rto, rto_location, cell] of [
+    ["MH10", "Mumbai", "AL5"], ["MH15", "Pune", "AP5"], ["KA19", "Bangalore", "O5"],
+    ["ZZ01", "Mumbai", "AL5"],
+  ]) {
+    const result = rate({ ...facts, rto, rto_location });
+    assert.deepEqual([result.tp.status, result.tp.rate, result.review_fields],
+      ["ambiguous", null, undefined], `${rto} / ${rto_location}`);
+    assert.ok(result.blockers.some(blocker => blocker.component === "tp" && blocker.kind === "grid" &&
+      !blocker.fields.length && blocker.sources.some(source => source.sheet === "Pvtcar" && source.cells === cell) &&
+      blocker.sources.some(source => source.sheet === "General Guidelines" && source.cells === "C10")));
+  }
+  assert.equal(rate({ ...facts, rto: "MH01", rto_location: "Mumbai" }).tp.rate, "38");
+  assert.equal(rate({ ...facts, rto: "DL9C", rto_location: "Delhi" }).tp.rate, "38");
+});
+
 test("All four fixture traces replay known source-reviewed facts against the original corpus", () => {
   const expected = [
     ["pvt-car-comprehensive-hdfc-ergo", "ambiguous", null, null, "rollover"],
