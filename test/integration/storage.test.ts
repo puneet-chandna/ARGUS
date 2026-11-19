@@ -9,7 +9,7 @@ import { checksum, pdfObject } from "../../lib/upload.ts";
 import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
 import { applyRating } from "../../lib/report.ts";
 import { runStore } from "../../lib/runs.ts";
-import { verifiedOcrProfile } from "../../lib/verified-ocr.ts";
+import { rebindExtraction, verifiedOcrProfile } from "../../lib/verified-ocr.ts";
 
 const pdfFile = new URL("../../vaatun-starter-bundle/sample-policies/pvt-car-satp-go-digit.pdf", import.meta.url);
 
@@ -169,6 +169,7 @@ test("real auth isolates history and PDF, retries bind to content, and original 
       { field: "rto", value: "UP78", quote: "RTO: UP78", box: null },
       { field: "fuel", value: "Petrol", quote: "Fuel type: Petrol", box: null },
       { field: "engine_cc", value: "1086", quote: "Engine capacity: 1086 cc", box: null },
+      { field: "start_date", value: "2026-03-25", quote: "Policy Start Date: 2026-03-25", box: null },
     ] as const;
     const reads = (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
       reader, model: "test", page: 1, transcript: candidates.map(candidate => candidate.quote).join("\n"),
@@ -230,25 +231,29 @@ test("real auth isolates history and PDF, retries bind to content, and original 
       { reader: "nvidia-super-vl", page: 1, transcript: "Engine capacity: 1086 cc", model: "test",
         candidates: [{ field: "engine_cc", value: "1086", quote: "Engine capacity: 1086 cc", box: null }] },
     ]).engine_cc;
-    const seeded = { ...renamed.result, fields: { ...renamed.result.fields, engine_cc: conflict } };
+    const replayable = rebindExtraction(report, renamed.filename);
+    const seeded = applyRating({ ...replayable, fields: { ...replayable.fields, engine_cc: conflict, policy_type: {
+      ...replayable.fields.policy_type, value: null, status: "needs_review", reason: "insufficient_agreement",
+    } } });
     assert.ifError((await supabase.from("argus_runs").update({ result: seeded }).eq("id", runId)).error);
     const confirmFields = (cookie: string, page: number, revision: number, resolve = true) => request(path, cookie, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ revision, confirmations: [
-        { field: "policy_type", value: "Liability Only Policy", page },
+      body: JSON.stringify({ revision, guided: true, confirmations: [
+        { field: "policy_type", value: "Private Car Liability Only Policy", page },
         ...(resolve ? [{ field: "engine_cc", value: "1086", page: 1 }] : []),
       ] }),
     });
     assert.equal((await confirmFields(other, 1, renamed.revision)).status, 404);
     assert.equal((await confirmFields(owner, pages + 1, renamed.revision)).status, 400);
     assert.equal((await confirmFields(owner, 1, renamed.revision, false)).status, 422);
-    assert.deepEqual((await (await request(path, owner)).json()).run.result, seeded);
+    assert.deepEqual((await (await request(path, owner)).json()).run.result, JSON.parse(JSON.stringify(seeded)));
     const confirmedReview = await confirmFields(owner, 1, renamed.revision);
     assert.equal(confirmedReview.status, 200, JSON.stringify(await confirmedReview.clone().json()));
     const { run: reviewed } = await confirmedReview.json();
     assert.equal(reviewed.result.fields.policy_type.status, "confirmed_by_reviewer");
     assert.equal(reviewed.result.fields.policy_type.confirmation.page, 1);
     assert.equal(reviewed.result.od.applicable, false);
+    assert.equal(reviewed.result.tp.rate, "29.5");
     assert.equal((await confirmFields(owner, 1, renamed.revision)).status, 409);
 
     for (const [i, cookie] of [owner, other].entries()) {
@@ -282,7 +287,15 @@ test("real auth isolates history and PDF, retries bind to content, and original 
     assert.equal((await remove(path, owner, true)).status, 200);
     assert.equal((await request(path, owner)).status, 404);
     assert.equal((await request(path + "/pdf", owner)).status, 404);
-    assert.ok((await supabase.storage.from("argus-policy-pdfs").download(pdfObject(users[0], runId!))).error);
+    const bucket = supabase.storage.from("argus-policy-pdfs");
+    const deletedObject = pdfObject(users[0], runId!);
+    const lateRetry = await bucket.upload(deletedObject, pdf, { contentType: "application/pdf", upsert: true });
+    assert.ok(lateRetry.error, "A delayed retry must not recreate the deleted PDF.");
+    assert.ok((await bucket.download(deletedObject)).error);
+    const replay = await upload("unseen-synthetic.pdf");
+    const { run: replayed } = await replay.json();
+    if (replayed) originals.push({ owner: users[0], run: replayed.id });
+    assert.equal(replay.status, 409, "A used upload key must not create a new run after deletion.");
     const cacheRows = () => supabase.from("argus_ocr_cache").select("checksum").eq("owner_id", users[0]);
     assert.equal((await cacheRows()).data?.length, 1);
     assert.equal((await remove(`/api/runs/${duplicateId}`, owner, true)).status, 200);

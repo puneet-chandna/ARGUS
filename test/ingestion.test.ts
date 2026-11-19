@@ -399,3 +399,16 @@ test("an inline previous policy reference does not start a section", () => {
   assert.equal(decide("policy.pdf", reads).start_date.value, "2026-03-25");
   assert.equal(grounded(start, `Previous Policy Details:\n${quote}`), false);
 });
+
+test("coverage dates must quote the matching period boundary and cannot borrow an issue date", () => {
+  const valid = (field: "start_date" | "end_date", value: string, quote: string) =>
+    grounded({ field, value, quote, box: null }, quote);
+  assert.equal(valid("start_date", "2026-03-25", "Issue Date: 2026-03-25"), false);
+  assert.equal(valid("start_date", "2026-03-25", "Policy expiry date: 2026-03-25"), false);
+  assert.equal(valid("end_date", "2026-03-25", "Policy start date: 2026-03-25"), false);
+  assert.equal(valid("start_date", "2026-02-14", "Period of insurance from: 2026-02-14"), true);
+  assert.equal(valid("start_date", "2026-03-25", "Period of insurance from: 2026-02-14 | Issue Date: 2026-03-25"), false);
+  assert.equal(valid("end_date", "2027-02-13", "Period of Insurance: From 14/02/2026 To 13/02/2027"), true);
+  assert.equal(valid("start_date", "2026-02-14", "Period of Insurance: From 14/02/2026 To 13/02/2027"), true);
+  assert.equal(valid("start_date", "2027-02-13", "Period of Insurance: From 14/02/2026 To 13/02/2027"), false);
+});

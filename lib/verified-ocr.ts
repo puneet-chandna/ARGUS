@@ -19,7 +19,9 @@ export function verifiedOcr(report: Report) {
       fields.some(field => field.status !== "accepted" && field.evidence.length > 0)) return null;
 
   const { filename, checksum, extraction_version, reader_failures, clarifications } = report;
-  const extraction: Extraction = { filename, checksum, extraction_version, reader_failures, clarifications, fields: report.fields };
+  const fieldsForReuse = Object.fromEntries(Object.entries(report.fields).map(([field, { rejected_evidence, ...decision }]) => [field, decision]));
+  const extraction: Extraction = { filename, checksum, extraction_version, reader_failures, clarifications, fields: fieldsForReuse,
+    ...(report.reread && { reread: report.reread }) };
   const texts = new Map<string, { page: number; text: string }>();
   for (const field of fields) {
     for (const { page, quote } of field.evidence) texts.set(JSON.stringify([page, quote]), { page, text: quote });
@@ -35,6 +37,7 @@ export function rebindExtraction(extraction: Extraction, filename: string): Extr
     fields: Object.fromEntries(Object.entries(extraction.fields).filter(([, decision]) => !decision.confirmation || decision.confirmation.page).map(([field, decision]) => [
       field, {
         ...decision, evidence: decision.evidence.map(source => ({ ...source, file: filename })),
+        ...(decision.rejected_evidence && { rejected_evidence: decision.rejected_evidence.map(source => ({ ...source, file: filename })) }),
         ...(decision.confirmation && { confirmation: { ...decision.confirmation, file: filename } }),
       },
     ])),

@@ -6,6 +6,7 @@ const RTO = "4W  RTO";
 const TP = "4W SATP";
 const PACKAGE = "4W New Business 1+3";
 const file = data.files.godigit.split("/").at(-1)!;
+const workbookMonth = "2026-03"; // The workbook filename dates this edition; the SATP sheet has no effective-date heading.
 const clusters: Record<string, string> = {
   delhi: "delhi/ncr", ncr: "delhi/ncr",
   "ap ts_good1": "ap ts_good1/good2", "ap ts_good2": "ap ts_good1/good2",
@@ -90,6 +91,20 @@ export function digit(policy: Facts): Parts {
     cite(reason, source(TP, "B2:E2"), source(RTO, "B2:C2"));
     return policy.vehicle_class ? finish("unsupported", reason) : finish("ambiguous", reason, null, ["vehicle_class"]);
   }
+  const startDate = policyStartDate(policy.start_date);
+  const edition = source(TP, "B2:F2");
+  if (!startDate) {
+    const reason = "Confirm the policy start date to check the dated Go Digit SATP workbook.";
+    cite(reason, edition);
+    return finish("ambiguous", reason, null, ["start_date"]);
+  }
+  if (startDate.slice(0, 7) !== workbookMonth) {
+    const reason = "The supplied Go Digit SATP workbook is dated March 2026. The corpus has no SATP grid for the policy’s start month.";
+    trace.push({ step: reason, sources: [edition], policy_fields: ["start_date"] });
+    return finish("unsupported", reason);
+  }
+  trace.push({ step: `The policy starts ${startDate}, within the workbook’s March 2026 edition.`,
+    sources: [edition], policy_fields: ["start_date"] });
   const rto = rtoCode(policy.rto);
   if (!validRto(rto)) {
     const reason = "A verified RTO code is needed to select the 4WTP cluster.";
@@ -166,11 +181,14 @@ export function digit(policy: Facts): Parts {
     const [, label, segment, band, rate, note] = row;
     cite(`Selected ${label} / ${segment} / age ${band} by the SATP row labels.`, citation);
     if (note) {
-      cite(`Checked the row’s restriction: ${note}.`, citation);
       const result = restriction(note, cc, belowTen);
-      if (result) return finish(result, result === "unsupported" ? `${note}.` : `The available facts do not clear the source restriction: ${note}.`, null,
-        result === "ambiguous" ? [...(cc === null && /cc/i.test(note) ? ["engine_cc"] : []),
+      if (result) {
+        const reason = result === "unsupported" ? `${note}.` : `The available facts do not clear the source restriction: ${note}.`;
+        cite(reason, citation);
+        return finish(result, reason, null, result === "ambiguous" ? [...(cc === null && /cc/i.test(note) ? ["engine_cc"] : []),
           ...(belowTen === null && ageAffectsNote ? ["vehicle_age"] : [])] : undefined);
+      }
+      cite(`Checked the row’s restriction: ${note}.`, citation);
     }
     if (rate === null) {
       const reason = "The matching SATP row has no numeric Max CD2 rate.";

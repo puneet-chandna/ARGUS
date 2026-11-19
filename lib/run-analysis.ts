@@ -1,12 +1,15 @@
-import { after } from "next/server";
+import { after } from "next/server.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { extract, PdfError, type Extraction } from "./ingestion/index.ts";
 import { EXTRACTION_VERSION, liveOcrStatus } from "./ingestion/providers.ts";
+import { HttpError } from "./http.ts";
 import { estimateSeconds, type CacheCheck, type RunProgress, type Stage } from "./progress.ts";
 import { applyRating, type Report } from "./report.ts";
-import type { runStore, StoredRun } from "./runs.ts";
+import { canRetryOcr, type runStore, type StoredRun } from "./runs.ts";
 import { checksum } from "./upload.ts";
 import { rebindExtraction, reuseConfirmations } from "./verified-ocr.ts";
+import { targetedReread } from "./reread.ts";
+import { mergeOcrRetry } from "./retry-ocr.ts";
 
 type Store = ReturnType<typeof runStore>;
 
@@ -35,11 +38,19 @@ export async function lookupCache(store: Store, hash: string) {
 
 type CacheLookup = { check: CacheCheck; reusable: Extraction | null; reviewed: Extraction | null };
 
-export async function startAnalysis(store: Store, run: StoredRun, cached?: CacheLookup, startedAt = new Date().toISOString()): Promise<StoredRun> {
-  if (run.status === "complete" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now())) return run;
-  const lookup = cached ?? await lookupCache(store, run.checksum);
-  const claim = await store.claim(run.id);
-  if (!claim) return store.get(run.id);
+export async function startAnalysis(store: Store, run: StoredRun, cached?: CacheLookup, startedAt = new Date().toISOString(), retryOcr = false): Promise<StoredRun> {
+  if (retryOcr && !canRetryOcr(run)) throw new HttpError(409, "An OCR retry is unavailable for this run.");
+  if (retryOcr && liveOcrStatus() !== "ready") throw new HttpError(503, "OCR readers are unavailable. Try the saved PDF again later.");
+  if (!retryOcr && (run.status === "complete" || (run.status === "processing" && Date.parse(run.lease_until ?? "") > Date.now()))) return run;
+  const lookup: CacheLookup = retryOcr ? { check: { cache: "miss", pagesTotal: run.pages_total, pagesCached: 0 }, reusable: null, reviewed: null }
+    : cached ?? await lookupCache(store, run.checksum);
+  const claim = retryOcr ? await store.claimOcrRetry(run) : await store.claim(run.id);
+  if (!claim) {
+    const current = await store.get(run.id);
+    if (retryOcr && current.revision === run.revision) throw new HttpError(409, "The saved PDF is unavailable for OCR retry.");
+    return current;
+  }
+  const previous = retryOcr ? claim.result : null;
 
   const fake = fakeSlow();
   const now = new Date().toISOString();
@@ -88,7 +99,7 @@ export async function startAnalysis(store: Store, run: StoredRun, cached?: Cache
     let reason: string | null = null;
     try {
       let extraction: Extraction;
-      if (lookup.reusable || fake === "cache-hit") {
+      if (lookup.reusable || (fake === "cache-hit" && !retryOcr)) {
         extraction = lookup.reusable ? rebindExtraction(lookup.reusable, claim!.filename) : extractionStub;
         move("resolving");
       } else {
@@ -116,7 +127,17 @@ export async function startAnalysis(store: Store, run: StoredRun, cached?: Cache
             () => store.reserveGemini(claim!),
             (checked, count, event) => publish("reading", {
               pagesDone: checked, pagesTotal: count, ...event, partial: event.partial ?? progress.partial,
-            }), page => { externalPages.add(page); }, controller.signal);
+            }), page => { externalPages.add(page); }, controller.signal,
+            async (initial, context) => {
+              if (claim!.reread_attempted_at) return initial;
+              const reviewed = previous ? mergeOcrRetry(previous, initial) : lookup.reviewed
+                ? reuseConfirmations(initial, lookup.reviewed) : initial;
+              return targetedReread(reviewed, context, {
+                allowCloud: claim!.allow_cloud && liveOcrStatus() === "ready",
+                reserve: () => store.reserveReread(claim!), reserveGemini: () => store.reserveGemini(claim!),
+                onSend: page => { externalPages.add(page); },
+              });
+            });
         }
         if (externalPages.size && progress.pagesDone === progress.pagesTotal && !Object.keys(extraction.reader_failures).length) {
           telemetry = (performance.now() - readStarted) / 1000 / externalPages.size;
@@ -124,7 +145,7 @@ export async function startAnalysis(store: Store, run: StoredRun, cached?: Cache
         await publish("resolving");
       }
       controller.signal.throwIfAborted();
-      result = applyRating(lookup.reviewed && lookup.reusable !== lookup.reviewed
+      result = applyRating(previous ? mergeOcrRetry(previous, extraction) : lookup.reviewed && lookup.reusable !== lookup.reviewed
         ? reuseConfirmations(extraction, lookup.reviewed) : extraction);
     } catch (error) {
       if (controller.signal.aborted) return store.get(claim!.id);
@@ -137,7 +158,7 @@ export async function startAnalysis(store: Store, run: StoredRun, cached?: Cache
     const stage = result ? "complete" : "failed";
     move(stage, { status: stage, ...(result && mode === "instant" && { pagesDone: total ?? 0 }) });
     const completed = await store.finish(claim!, result, reason, externalPages.size ? "external" : "local", progress, timings, telemetry, mode, lookup.check.cache);
-    if (completed.status === "complete" && completed.revision === claim!.revision + 1) {
+    if (result && completed.status === "complete" && !completed.error && completed.revision === claim!.revision + 1) {
       if (mode === "instant") {
         after(async () => { await store.cleanupOriginal(completed.id).catch(() => {}); });
       } else await Promise.allSettled([store.cacheOcr(completed), store.cleanupOriginal(completed.id)]);

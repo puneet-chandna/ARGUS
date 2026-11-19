@@ -1,6 +1,7 @@
 import { canonical, CLARIFIABLE, FIELDS } from "./ingestion/facts.ts";
 import type { Field } from "./ingestion/facts.ts";
 import { policyCoverage, vehicleBodyStyle } from "./rating/types.ts";
+import type { Blocker } from "./rating/types.ts";
 
 const MANUAL_FIELDS: readonly Field[] = [
   "policy_type", "insurer", "vehicle_class", "previous_insurer", "business_type",
@@ -11,7 +12,7 @@ const MANUAL_FIELDS: readonly Field[] = [
 const CHECKS = new Set([...CLARIFIABLE, "invalid_coverage_period", "premium_totals_disagree"]);
 
 type ReviewFact = { status: string; reason: string; value: string | number | null; evidence: { page?: number }[] };
-type ReviewableReport = { status: string; fields: Record<string, ReviewFact>; review_fields?: readonly string[]; rule_version?: string };
+type ReviewableReport = { status: string; fields: Record<string, ReviewFact>; review_fields?: readonly string[]; rule_version?: string; blockers?: Blocker[] };
 
 export function conflictFields(report: { fields: Record<string, ReviewFact> }) {
   return FIELDS.filter(field => {
@@ -37,15 +38,18 @@ export function reviewFields(report: ReviewableReport) {
     return fact?.status === "needs_review" && CHECKS.has(fact.reason) && fact.evidence.some(source => source.page);
   });
   if (report.status !== "ambiguous") return disputed;
-  return [...new Set([...disputed, ...MANUAL_FIELDS.filter(field => {
+  const requested = report.blockers?.flatMap(blocker => blocker.fields) ?? report.review_fields ?? [];
+  return [...new Set([...disputed, ...requested.filter(field => FIELDS.some(name => name === field)), ...MANUAL_FIELDS.filter(field => {
     const fact = report.fields[field];
-    if (report.review_fields?.includes(field)) return true;
+    if (report.review_fields?.includes(field) || report.blockers?.some(blocker => blocker.fields.includes(field))) return true;
     if (field === "policy_type" && !policyCoverage(String(fact?.value ?? ""))) return true;
     return !fact || (fact.value == null && fact.status !== "confirmed_by_reviewer");
   })])];
 }
 
 export function requiredReviewFields(report: ReviewableReport) {
+  if (report.blockers) return [...new Set(report.blockers.flatMap(blocker => blocker.fields))].filter(field =>
+    FIELDS.some(name => name === field));
   if (report.status !== "ambiguous") return [];
   const allowed = new Set<string>(reviewFields(report));
   if (report.rule_version?.endsWith("-tata-rto-v2") || /-hdfc-od-v[234]$/.test(report.rule_version ?? "")) {

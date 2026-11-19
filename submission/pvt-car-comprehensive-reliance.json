@@ -55,14 +55,14 @@
       ]
     },
     "model": {
-      "value": "Kwid",
+      "value": "RENAULT KWID 1.0 RXT O",
       "status": "accepted",
       "reason": "manual_source_verification",
       "evidence": [
         {
           "file": "pvt-car-comprehensive-reliance.pdf",
           "page": 2,
-          "raw": "Kwid",
+          "raw": "RENAULT KWID 1.0 RXT O",
           "method": "manual_source_verification"
         }
       ]
@@ -228,7 +228,7 @@
   "clarifications": [],
   "od": {
     "status": "ambiguous",
-    "reason": "The workbook does not establish that the supplied rate applied on the policy start date.",
+    "reason": "The January private-car old-business sheet does not establish a rate on the policy start date.",
     "rate": null,
     "applicable": true
   },
@@ -284,12 +284,12 @@
       ]
     },
     {
-      "step": "model: Kwid",
+      "step": "model: RENAULT KWID 1.0 RXT O",
       "sources": [
         {
           "file": "pvt-car-comprehensive-reliance.pdf",
           "page": 2,
-          "raw": "Kwid",
+          "raw": "RENAULT KWID 1.0 RXT O",
           "method": "manual_source_verification"
         }
       ]
@@ -460,31 +460,65 @@
           "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
           "sheet": "RTO List",
           "cells": "A1253:E1253"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "UP16",
+          "method": "manual_source_verification"
         }
+      ],
+      "policy_fields": [
+        "rto"
       ]
     },
     {
-      "step": "The vehicle is mapped to SMALL. The old-business rate row is selected by region.",
+      "step": "The printed model RENAULT KWID 1.0 RXT O maps to RENAULT KWID (SMALL). The old-business rate row is selected by region.",
       "sources": [
         {
           "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
           "sheet": "Make Model wise segment",
           "cells": "A397:C397"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "Renault",
+          "method": "manual_source_verification"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "RENAULT KWID 1.0 RXT O",
+          "method": "manual_source_verification"
         }
+      ],
+      "policy_fields": [
+        "make",
+        "model"
       ]
     },
     {
-      "step": "The mapped zone and region select payout row 11.",
+      "step": "The NORTH payout row “Delhi” matches the RTO region Delhi.",
       "sources": [
         {
           "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
           "sheet": "PRIVATE CAR COMP, SAOD & STP",
           "cells": "A11:F11"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "UP16",
+          "method": "manual_source_verification"
         }
+      ],
+      "policy_fields": [
+        "rto"
       ]
     },
     {
-      "step": "The workbook is dated February 2026. The private-car sheet title says Jan-26.",
+      "step": "The private-car old-business sheet is dated January 2026.",
       "sources": [
         {
           "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
@@ -500,25 +534,72 @@
           "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
           "sheet": "PRIVATE CAR COMP, SAOD & STP",
           "cells": "H3"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "999",
+          "method": "manual_source_verification"
         }
+      ],
+      "policy_fields": [
+        "engine_cc"
       ]
     },
     {
-      "step": "The workbook does not establish that the supplied rate applied on the policy start date.",
+      "step": "The January private-car old-business sheet does not establish a rate on the policy start date.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "A1"
+        },
+        {
+          "file": "pvt-car-comprehensive-reliance.pdf",
+          "page": 2,
+          "raw": "2025-12-23",
+          "method": "manual_source_verification"
+        }
+      ],
+      "policy_fields": [
+        "start_date"
+      ]
+    }
+  ],
+  "status": "ambiguous",
+  "rule_version": "ts1-5a79a3ea91c8efa6-reliance-v5",
+  "business_type": "renewal",
+  "confidence": {
+    "level": "low",
+    "reason": "At least one applicable rate is undetermined."
+  },
+  "blockers": [
+    {
+      "component": "od",
+      "reason": "The January private-car old-business sheet does not establish a rate on the policy start date.",
       "sources": [
         {
           "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
           "sheet": "PRIVATE CAR COMP, SAOD & STP",
           "cells": "A1"
         }
-      ]
+      ],
+      "kind": "grid",
+      "fields": []
+    },
+    {
+      "component": "tp",
+      "reason": "The old-business grid has an STP column and no package TP rate.",
+      "sources": [
+        {
+          "file": "Reliance Broking Premier  FEB 26 Grid.xlsx",
+          "sheet": "PRIVATE CAR COMP, SAOD & STP",
+          "cells": "A1:H2"
+        }
+      ],
+      "kind": "grid",
+      "fields": []
     }
   ],
-  "status": "ambiguous",
-  "rule_version": "ts1-5a79a3ea91c8efa6",
-  "business_type": "renewal",
-  "confidence": {
-    "level": "low",
-    "reason": "At least one applicable rate is undetermined."
-  }
+  "rating_trace_start": 18
 }

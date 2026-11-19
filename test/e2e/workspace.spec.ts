@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { EXTRACTION_VERSION } from "../../lib/ingestion/providers.ts";
 import { decide, type PageRead } from "../../lib/ingestion/facts.ts";
+import { applyRating } from "../../lib/report.ts";
 import { runStore } from "../../lib/runs.ts";
 import { checksum, pdfObject } from "../../lib/upload.ts";
 import { verifiedOcrProfile } from "../../lib/verified-ocr.ts";
@@ -59,65 +60,41 @@ async function uploadPdf(page: Page, name: string, buffer: Buffer) {
   await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible({ timeout: 15_000 });
 }
 
-test("the Tata commission card shows 38% and reopens the cited result and private PDF", async ({ page, reviewer }) => {
+test("the original Tata classification stays unresolved and its evidence and PDF reopen", async ({ page, reviewer }) => {
   const name = "pvt-car-satp-tata-aig.pdf";
   const pdf = await readFile(new URL(`../../vaatun-starter-bundle/sample-policies/${name}`, import.meta.url));
   const fixture = JSON.parse(await readFile(new URL("../../submission/pvt-car-satp-tata-aig.json", import.meta.url), "utf8"));
-  // Reuse the source-reviewed extraction so the browser exercises the real app without paid OCR.
+  // Reuse the source-reviewed observations without inventing a printed vehicle class.
   const seeded = await reviewer.db.from("argus_ocr_cache").insert({
     owner_id: reviewer.id, checksum: checksum(pdf), profile: verifiedOcrProfile(), grounded_text: [],
-    extraction: {
-      filename: name, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
-      reader_failures: {}, clarifications: [], fields: {
-        ...fixture.fields,
-        vehicle_class: {
-          value: "hatch back", status: "accepted", reason: "independent_agreement",
-          evidence: [{ file: name, page: 4, raw: "Hatch Back" }],
-        },
-        end_date: {
-          value: null, status: "needs_review", reason: "conflicting_readings",
-          evidence: [{ file: name, page: 11, reader: "sarvam", raw: "30/08/2024", quote: "Date of Expiry: 30/08/2024" }],
-        },
-      },
-    },
+    extraction: { filename: name, checksum: checksum(pdf), extraction_version: EXTRACTION_VERSION,
+      reader_failures: {}, clarifications: [], fields: fixture.fields },
   });
   expect(seeded.error).toBeNull();
-
   await page.goto("/sign-in");
   await signIn(page, reviewer);
   await uploadPdf(page, name, pdf);
   const commission = page.getByRole("region", { name: "Broker commission" });
   await expect(commission).toContainText("Confirm whether the policy is for a private car");
-  await expect(page.getByRole("heading", { name: "One policy detail to review" })).toBeVisible();
+  await expect(commission).toContainText("Inapplicable");
+  await expect(commission).toContainText("Undetermined");
   await page.getByRole("button", { name: "Vehicle class", exact: true }).click();
   const review = page.getByRole("dialog");
-  await review.getByRole("textbox", { name: "Value from the policy" }).fill("Private car");
-  await review.getByRole("button", { name: "Confirm value" }).click();
-  await review.getByRole("button", { name: "Recalculate commission" }).click();
-  await expect(page.getByText("Review saved. Commission recalculated.")).toBeVisible();
-  await expect(commission).toContainText("Inapplicable");
-  await expect(commission).toContainText("38.0%");
-  await expect(commission).toContainText("DELHI standard-grid base on net premium");
-  await expect(commission).toContainText("Pvtcar!V511, V515, V519, V523, V527, V531, V535");
-  await expect(page.getByRole("heading", { name: /policy detail.*to review/ })).toHaveCount(0);
-  await page.getByRole("tab", { name: /Policy facts/ }).click();
-  await expect(page.getByRole("tabpanel", { name: /Policy facts/ }).getByText("Other unverified readings")).toHaveCount(0);
-  await page.getByRole("button", { name: "View decision evidence" }).click();
-  const trace = page.getByRole("tabpanel", { name: "Decision trace" });
-  await expect(trace.getByText(/policy’s RTO location matches the DELHI/)).toBeVisible();
-  await expect(trace.getByText("Pvtcar!V511, V515, V519, V523, V527, V531, V535")).toBeVisible();
-  await expect(trace.getByText("General Guidelines!C10").first()).toBeVisible();
-  await expect(trace.getByRole("link", { name: /page 4, in a new tab/ }).first()).toHaveAttribute("href", /\/pdf#page=4$/);
+  await expect(review.getByRole("textbox", { name: "Value from the policy" })).toBeEmpty();
+  await expect(review.getByRole("img", { name: /Page 4 of pvt-car-satp-tata-aig.pdf/i })).toBeVisible();
+  await expect(review.getByRole("button", { name: /Use suggested value/ })).toHaveCount(0);
+  await expect(review.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
+  await review.getByRole("button", { name: "Back to report" }).click();
   const pdfUrl = await page.getByRole("link", { name: "Open original PDF in a new tab" }).getAttribute("href");
   expect(pdfUrl).toMatch(/^\/api\/runs\/.+\/pdf$/);
-
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "Sign in to Argus" })).toBeVisible();
   expect((await page.request.get(pdfUrl!)).status()).toBe(401);
   await signIn(page, reviewer);
   await page.locator(".history-item").filter({ hasText: name }).click();
   await page.reload();
-  await expect(commission).toContainText("38.0%");
+  await expect(commission).toContainText("Undetermined");
+  await expect(page.getByRole("button", { name: "Vehicle class", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Export run", exact: true }).click();
   await expect(page.getByRole("link", { name: "Download JSON" })).toBeVisible();
   const activity = await page.request.get("/api/profile?view=activity").then(response => response.json());
@@ -125,9 +102,9 @@ test("the Tata commission card shows 38% and reopens the cited result and privat
   const original = await page.request.get(pdfUrl!);
   expect(original.status()).toBe(200);
   expect(checksum(await original.body())).toBe(checksum(pdf));
-
-  // Opening a previously saved decision recalculates the rate from its verified facts.
   const saved = await page.request.get(pdfUrl!.replace(/\/pdf$/, "")).then(response => response.json());
+  expect(saved.run.result.fields.vehicle_class.value).toBeNull();
+  expect(saved.run.result.fields.vehicle_class.evidence.map((source: { page: number }) => source.page)).toEqual(expect.arrayContaining([4, 7]));
   const legacy = { ...saved.run.result, status: "unsupported", tp: {
     status: "unsupported", rate: null, applicable: true,
     reason: "The workbook does not confirm which payout cluster covers the policy’s RTO.",
@@ -135,10 +112,11 @@ test("the Tata commission card shows 38% and reopens the cited result and privat
   const update = await reviewer.db.from("argus_runs").update({ result: legacy }).eq("id", saved.run.id);
   expect(update.error).toBeNull();
   await page.reload();
-  await expect(commission).toContainText("38.0%");
+  await expect(commission).toContainText("Confirm whether the policy is for a private car");
   const stored = await reviewer.db.from("argus_runs").select("result,revision").eq("id", saved.run.id).single();
   expect(stored.error).toBeNull();
-  expect(stored.data?.result.tp.rate).toBe("38");
+  expect(stored.data?.result.tp.rate).toBeNull();
+  expect(stored.data?.result.status).toBe("ambiguous");
   expect(stored.data?.result.fields).toEqual(saved.run.result.fields);
   expect(stored.data?.revision).toBe(saved.run.revision + 1);
 });
@@ -208,12 +186,19 @@ test("an unseen HDFC package can finish OD with eligible GWP and its own source"
 
 test("the reviewer resolves an unseen policy conflict from the PDF and keeps the cited choice", async ({ page, reviewer }) => {
   const name = "unseen-review-policy.pdf";
+  const policyInputs = [
+    { field: "insurer", value: "Digit General Insurance Ltd.", quote: "Digit General Insurance Ltd.", box: null },
+    { field: "policy_type", value: "Private Car Liability Only Policy", quote: "Private Car Liability Only Policy", box: null },
+    { field: "rto", value: "UP78", quote: "RTO: UP78", box: null },
+    { field: "fuel", value: "Petrol", quote: "Fuel type: Petrol", box: null },
+    { field: "start_date", value: "2026-03-25", quote: "Policy start date: 2026-03-25", box: null },
+  ] as const;
   await page.goto("/sign-in");
   await signIn(page, reviewer);
   expect((await page.request.patch("/api/profile", { headers: { Origin: new URL(page.url()).origin },
     data: { part: "data", retention_days: null, delete_originals: true },
   })).status()).toBe(200);
-  await uploadPdf(page, name, syntheticPdf("Engine capacity: 998 cc", "Private Car Liability Only Policy", "Insurer: Example General Insurance"));
+  await uploadPdf(page, name, syntheticPdf("Engine capacity: 998 cc", ...policyInputs.map(input => input.quote)));
   await expect(page.getByRole("region", { name: "Broker commission" })).toContainText("Undetermined");
 
   // Inject the two OCR responses at the persisted analysis boundary; the review and storage routes stay real.
@@ -222,13 +207,17 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
       candidates: [{ field: "engine_cc", value: "998", quote: "Engine capacity: 998 cc", box: [0.08, 0.2, 0.5, 0.4] }] },
     { reader: "nvidia-super-vl", model: "fixture-2", page: 1, transcript: "Engine capacity: 1086 cc",
       candidates: [{ field: "engine_cc", value: "1086", quote: "Engine capacity: 1086 cc", box: [0.08, 0.2, 0.5, 0.4] }] },
+    ...policyInputs.flatMap((candidate, index) => (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+      reader, model: "test", page: index + 2, transcript: candidate.quote, candidates: [candidate],
+    }))),
   ];
   const { data, error } = await reviewer.db.from("argus_runs").select("id,result").eq("owner_id", reviewer.id).single();
   expect(error).toBeNull();
   const pdfUrl = `/api/runs/${data!.id}/pdf`;
   expect((await page.request.get(pdfUrl)).status()).toBe(200);
+  const result = applyRating({ ...data!.result, fields: decide(name, sources), reader_failures: {} });
   const update = await reviewer.db.from("argus_runs")
-    .update({ result: { ...data!.result, fields: decide(name, sources), reader_failures: {} } })
+    .update({ result })
     .eq("id", data!.id).eq("owner_id", reviewer.id);
   expect(update.error).toBeNull();
   await page.reload();
@@ -242,19 +231,10 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
   await dialog.getByRole("button", { name: "Use reading 2" }).click();
   await expect(dialog.getByRole("textbox", { name: "Value from the policy" })).toHaveValue("998");
   await dialog.getByRole("button", { name: "Confirm value" }).click();
-  for (const [field, policyPage, value] of [
-    ["Policy type", "2 of 3", "Private Car Liability Only Policy"],
-    ["Insurer", "3 of 3", "Example General Insurance"],
-  ]) {
-    await expect(dialog.getByRole("heading", { name: field, exact: true })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeDisabled();
-    await dialog.getByRole("combobox", { name: "Page", exact: true }).selectOption({ label: policyPage });
-    await dialog.getByRole("textbox", { name: "Value from the policy" }).fill(value);
-    await dialog.getByRole("button", { name: "Confirm value" }).click();
-  }
   await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeEnabled();
   await dialog.getByRole("button", { name: "Recalculate commission" }).click();
   await expect(page.getByText("Review saved. Commission recalculated.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Broker commission" })).toContainText(/15(?:\.0)?%/);
 
   await page.reload();
   await page.getByRole("tab", { name: /Policy facts/ }).click();
@@ -267,6 +247,31 @@ test("the reviewer resolves an unseen policy conflict from the PDF and keeps the
     if (error) throw error;
     return data.pdf_deleted_at;
   }).not.toBeNull();
+});
+
+test("guided review accepts the business-type alternative without requiring an absent previous insurer", async ({ page, reviewer }) => {
+  const name = "synthetic-reliance-rollover.pdf";
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await uploadPdf(page, name, syntheticPdf("Business Type: Rollover", "Private car package policy - synthetic review fixture"));
+  const saved = await reviewer.db.from("argus_runs").select("id,result").eq("owner_id", reviewer.id).single();
+  expect(saved.error).toBeNull();
+  const result = applyRating({ ...saved.data!.result, reader_failures: {}, fields: Object.fromEntries(Object.entries({
+    insurer: "Reliance", policy_type: "Private Car Package Policy", rto: "UP16", make: "Renault", model: "Kwid",
+    fuel: "petrol", engine_cc: "999", start_date: "2026-01-15", standalone_zd: "no", tyre_rti_bundle: "no", extended_warranty: "no",
+  }).map(([field, value]) => [field, { value, status: "accepted", reason: "independent_agreement", evidence: [] }])) });
+  expect(result.review_fields).toEqual(["previous_insurer", "business_type"]);
+  expect((await reviewer.db.from("argus_runs").update({ result }).eq("id", saved.data!.id)).error).toBeNull();
+  await page.reload();
+  await page.getByRole("button", { name: "Verify policy details", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Field to review").selectOption("business_type");
+  await dialog.getByRole("textbox", { name: "Value from the policy" }).fill("Rollover");
+  await dialog.getByRole("button", { name: "Confirm value" }).click();
+  await expect(dialog.getByRole("button", { name: "Recalculate commission" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Recalculate commission" }).click();
+  await expect(page.getByText("Review saved. Commission recalculated.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Broker commission" })).toContainText(/17\.5%/);
 });
 
 test("profile saves real settings and protects profile data, runs and audit history", async ({ page, reviewer, browser }) => {
@@ -395,4 +400,61 @@ test("profile saves real settings and protects profile data, runs and audit hist
     const { error } = await reviewer.db.auth.admin.deleteUser(outsider.data.user!.id);
     expect(error).toBeNull();
   }
+});
+
+test("unavailable readers leave a completed run's OCR retry available", async ({ page, reviewer }) => {
+  const filename = "unseen-ocr-retry.pdf";
+  const pdf = syntheticPdf("Vehicle class: Private car");
+  const store = runStore(reviewer.db, reviewer.id);
+  const uploaded = await store.upload({ filename, bytes: pdf, digest: checksum(pdf), allowCloud: true }, randomUUID(), 1, "miss");
+  const confirmation = { field: "vehicle_class", value: "private car", raw: "Private car", file: filename,
+    page: 1, type: "reviewer_confirmation" } as const;
+  const result = applyRating({ filename, checksum: uploaded.checksum, extraction_version: EXTRACTION_VERSION,
+    reader_failures: { 1: { sarvam: "provider_timeout" } }, clarifications: [confirmation], fields: {
+      vehicle_class: { status: "confirmed_by_reviewer", value: confirmation.value, reason: "insufficient_agreement",
+        evidence: [], confirmation },
+    } });
+  expect((await reviewer.db.from("argus_runs").update({ status: "complete", revision: 2, result })
+    .eq("id", uploaded.id)).error).toBeNull();
+
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  const health = await page.request.get("/api/runs");
+  expect(health.ok()).toBe(true);
+  expect((await health.json()).ocr.live, "Live OCR must be disabled for this test").not.toBe("ready");
+  const path = `/api/runs/${uploaded.id}`;
+  const saved = async () => {
+    const response = await page.request.get(path);
+    expect(response.ok()).toBe(true);
+    return (await response.json()).run;
+  };
+  const headers = { Origin: new URL(page.url()).origin };
+  await page.getByRole("list", { name: "Saved policy runs" }).getByRole("button", { name: /unseen-ocr-retry\.pdf/ }).click();
+  await expect(page).toHaveURL(new RegExp(`#${uploaded.id}$`));
+  await expect(page.getByRole("heading", { name: filename, exact: true })).toBeVisible();
+  const retry = page.getByRole("button", { name: "Retry OCR from saved PDF" });
+  await expect(retry).toBeVisible();
+  const before = await saved();
+  const resume = await page.request.post(path, { headers });
+  expect(resume.status()).toBe(200);
+  expect((await resume.json()).run.revision).toBe(before.revision);
+  expect((await page.request.post(path, { headers, data: "retry" })).status()).toBe(415);
+
+  const response = page.waitForResponse(response => response.url().endsWith(path) && response.request().method() === "POST");
+  await retry.click();
+  const started = await response;
+  expect(started.status()).toBe(503);
+  expect(started.request().postDataJSON()).toEqual({ retryOcr: true, revision: before.revision });
+  await expect(page.getByRole("alert").filter({ hasText: "OCR readers are unavailable. Try the saved PDF again later." })).toBeVisible();
+  expect(await saved()).toMatchObject({ status: "complete", can_retry_ocr: true,
+    revision: before.revision, result: { clarifications: [confirmation] } });
+  const audit = await reviewer.db.from("argus_audit_events").select("action").match({ owner_id: reviewer.id, action: "analyzed" });
+  expect(audit.error).toBeNull();
+  expect(audit.data).toEqual([]);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible();
+  await expect(retry).toBeVisible();
+  const original = await page.request.get(`${path}/pdf`);
+  expect(original.ok()).toBe(true);
+  expect(await original.body()).toEqual(pdf);
 });

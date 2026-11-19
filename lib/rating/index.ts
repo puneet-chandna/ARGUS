@@ -3,8 +3,8 @@ import { digit } from "./digit.ts";
 import { hdfc } from "./hdfc.ts";
 import { reliance } from "./reliance.ts";
 import { tata } from "./tata.ts";
-import { component, policyCoverage, tidy, vehicleBodyStyle } from "./types.ts";
-import type { Facts, Parts, RatingResult } from "./types.ts";
+import { component, policyCoverage, policyStartDate, tidy, vehicleBodyStyle } from "./types.ts";
+import type { Blocker, Facts, Parts, RatingResult } from "./types.ts";
 export type { Facts, RatingResult, Source, TraceStep } from "./types.ts";
 export const RATE_CARD_VERSION = data.version;
 
@@ -41,6 +41,8 @@ export function rate(facts: Facts): RatingResult {
     if (["excluded", "not included", "no", "not applicable"].includes(value)) policy[key] = "no";
   }
 
+  const startDate = policyStartDate(policy.start_date);
+  const endDate = policyStartDate(policy.end_date);
   let parts: Parts;
   if (!kind || !insurer) {
     const detail = kind ? "insurer" : insurer ? "policy type" : "policy type and insurer";
@@ -50,6 +52,14 @@ export function rate(facts: Facts): RatingResult {
       tp: component("ambiguous", reason, null, kind ? kind !== "saod" : null),
       trace: [{ step: reason, sources: [] }],
       review_fields: [...(!kind ? ["policy_type"] : []), ...(!insurer ? ["insurer"] : [])],
+    };
+  } else if (startDate && endDate && startDate >= endDate) {
+    const reason = "The policy start date must be before its end date. Confirm both dates before selecting a rate.";
+    const dates = ["start_date", "end_date"];
+    parts = {
+      od: component("ambiguous", reason), tp: component("ambiguous", reason),
+      trace: [{ step: reason, sources: [], policy_fields: dates }],
+      review_fields: dates,
     };
   } else if (Object.hasOwn(engines, insurer)) {
     parts = engines[insurer as keyof typeof engines](policy);
@@ -65,10 +75,24 @@ export function rate(facts: Facts): RatingResult {
   if (kind === "saod") parts.tp = component("inapplicable", "Stand-alone OD policy.");
   const states = [parts.od.status, parts.tp.status];
   const status = states.includes("ambiguous") ? "ambiguous" : states.includes("unsupported") ? "unsupported" : "resolved";
+  const blockers: Blocker[] = (["od", "tp"] as const).flatMap<Blocker>(component => {
+    const result = parts[component];
+    if (result.status !== "ambiguous" && result.status !== "unsupported") return [];
+    const fields = result.status === "ambiguous" ? [...new Set(parts.review_fields ?? [])] : [];
+    const sources = parts.trace.filter(step => step.step === result.reason).flatMap(step => step.sources);
+    const common = { component, reason: result.reason, sources };
+    if (!fields.length) return [{ ...common, kind: "grid" as const, fields }];
+    const policy = fields.filter(field => field !== "eligible_private_car_gwp");
+    return [
+      ...(policy.length ? [{ ...common, kind: "policy_fact" as const, fields: policy }] : []),
+      ...(fields.includes("eligible_private_car_gwp") ? [{ ...common, kind: "external_fact" as const, fields: ["eligible_private_car_gwp"] }] : []),
+    ];
+  });
   return {
-    ...parts, status, rule_version: insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v2` :
-      insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v4` :
-      insurer === "godigit" ? `${RATE_CARD_VERSION}-digit-age-v2` : RATE_CARD_VERSION,
+    ...parts, blockers, status, rule_version: insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v5` :
+      insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v7` :
+      insurer === "godigit" ? `${RATE_CARD_VERSION}-digit-age-v4` :
+      insurer === "reliance-indusind" ? `${RATE_CARD_VERSION}-reliance-v5` : RATE_CARD_VERSION,
     business_type: businessType || null,
     confidence: status === "ambiguous" ? { level: "low", reason: "At least one applicable rate is undetermined." } :
       { level: "high", reason: "The supplied source evidence establishes the rate or coverage decision." },

@@ -34,10 +34,30 @@ export const GET = endpoint(async (request, route: Context) => {
   return json({ run: present(refreshed) });
 });
 
-export const POST = endpoint(async (_request, route: Context) => {
+async function retryInput(request: Request) {
+  if (!request.body || request.headers.get("content-length") === "0") return null;
+  if (request.headers.has("content-type")) return readJson(request);
+  const reader = request.body.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return null;
+      if (value.byteLength) throw new HttpError(415, "Expected a JSON request.");
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
+export const POST = endpoint(async (request, route: Context) => {
   const { store, id } = await context(route);
   const previous = await store.get(id);
-  const run = await startAnalysis(store, previous);
+  const input = await retryInput(request);
+  if (input) {
+    if (input.retryOcr !== true || !Number.isSafeInteger(input.revision)) throw new HttpError(400, "Select a saved OCR result to retry.");
+    if (input.revision !== previous.revision) throw new HttpError(409, "The result changed. Reload it before retrying OCR.");
+  }
+  const run = await startAnalysis(store, previous, undefined, undefined, Boolean(input));
   return json({ run: present(run) }, run.status === "processing" && run.revision > previous.revision ? 202 : 200);
 });
 
@@ -59,7 +79,7 @@ export const PATCH = endpoint(async (request, route: Context) => {
   }
   const { pdf } = await store.pdf(id);
   const pages = await storedPdfPages(new Uint8Array(await pdf.arrayBuffer()));
-  const reviewed = clarifyBatch(run.result, input.confirmations, pages);
+  const reviewed = clarifyBatch(run.result, input.confirmations, pages, input.preview === true);
   const remaining = requiredReviewFields(reviewed);
   if (input.preview === true) return json({ remaining });
   if (input.guided === true && remaining.length) {

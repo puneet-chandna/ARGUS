@@ -1,5 +1,5 @@
 export type Facts = Record<string, string>;
-export type Source = { file: string; page?: number; row?: string; sheet?: string; cells?: string };
+export type Source = { file: string; page?: number; row?: string; sheet?: string; cells?: string; url?: string };
 export type TraceStep = { step: string; sources: Source[]; policy_fields?: readonly string[] };
 export type Status = "resolved" | "unsupported" | "ambiguous";
 export type Component = {
@@ -16,10 +16,18 @@ export type GwpPreview = {
   policy_fields: readonly string[];
 };
 export type Parts = { od: Component; tp: Component; trace: TraceStep[]; review_fields?: readonly string[]; gwp_preview?: GwpPreview };
+export type Blocker = {
+  component: "od" | "tp";
+  kind: "policy_fact" | "external_fact" | "grid";
+  fields: readonly string[];
+  reason: string;
+  sources: Source[];
+};
 export type RatingResult = Parts & {
   status: Status;
   rule_version: string;
   business_type: string | null;
+  blockers: Blocker[];
   confidence: { level: "low" | "high"; reason: string };
 };
 

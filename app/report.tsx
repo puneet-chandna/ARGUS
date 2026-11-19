@@ -19,6 +19,7 @@ export type Source = {
   raw?: string;
   reader?: string;
   box?: [number, number, number, number] | null;
+  url?: string;
 };
 
 type Fact = {
@@ -61,6 +62,7 @@ export type Run = {
   lease_until?: string | null;
   pdf_deleted_at?: string | null;
   pdf_cleanup_pending?: boolean;
+  can_retry_ocr?: boolean;
   progress?: RunProgress | null;
   analysis_mode?: "instant" | "live" | null;
   ocr_mode?: "external" | "local" | null;
@@ -141,9 +143,10 @@ function Citation({ source, pdf, showFile = true, highlight }: { source: Source;
   if (gridSource(source)) {
     const location = source.sheet
       ? `${source.sheet}${source.cells ? `!${source.cells}` : ""}`
-      : `Page ${source.page} · ${source.row}`;
+      : `${source.page ? `Page ${source.page} · ` : ""}${source.row}`;
     return <span className="run-grid-citation">
       <span className={highlight ? "run-location cited-cell" : "run-location"}>{location}</span>
+      {source.url?.startsWith("https://") && <a href={source.url} target="_blank" rel="noreferrer">Open source</a>}
       {showFile && <span>{source.file}</span>}
     </span>;
   }
@@ -319,7 +322,7 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
   const [retry, setRetry] = useState(0);
   const [pageError, setPageError] = useState(false);
   const [badImage, setBadImage] = useState<number>();
-  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [discovered, setDiscovered] = useState<string[] | null>(null);
   const [checking, setChecking] = useState(false);
   const [ready, setReady] = useState(false);
   const [lastConfirmed, setLastConfirmed] = useState("");
@@ -328,12 +331,13 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
   const canvas = useRef<HTMLDivElement>(null);
   const recalculate = useRef<HTMLButtonElement>(null);
   const picker = useRef<HTMLSelectElement>(null);
-  const queue = [...new Set([...fields, ...Object.keys(drafts), ...discovered])];
+  const queue = [...new Set([...fields, ...Object.keys(drafts), ...(discovered ?? [])])];
   const field = queue.includes(selection) ? selection : queue[0];
-  const pending = [...new Set([...required, ...discovered])].filter(name => !drafts[name]);
+  const pending = (discovered ?? required).filter(name => !drafts[name]);
   const busy = working || checking;
   const answers = Object.values(drafts);
-  const annotations = conflicts.includes(field) ? readingGroups(report.fields[field]?.evidence ?? []) : [];
+  const fieldConflicts = new Set<string>(conflictFields(report));
+  const annotations = fieldConflicts.has(field) ? readingGroups(report.fields[field]?.evidence ?? []) : [];
   const currentPage = pages ? Math.min(page, pages) : page;
   const url = `/api/runs/${run.id}/pages`;
 
@@ -406,13 +410,6 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
     onDraft(answer);
     setReady(false);
     setLastConfirmed(fieldName(answer.field));
-    const outstanding = drafts[answer.field] ? required.filter(name => !drafts[name]) : pending;
-    const next = outstanding.find(name => name !== answer.field);
-    if (next) {
-      selectField(next);
-      picker.current?.focus();
-      return;
-    }
     void checkRemaining(Object.values({ ...drafts, [answer.field]: answer }));
   }
 
@@ -473,7 +470,7 @@ function ReviewDesk({ fields, required, conflicts, drafts, report, run, pdf, wor
           </select>
         </label>
         <ConfirmField key={field} field={field} fact={report.fields[field]} page={currentPage} openPage={openPage} pages={pages}
-          draft={drafts[field]} conflicting={conflicts.includes(field)} working={busy} advanced={Boolean(lastConfirmed)} onConfirm={confirm}
+          draft={drafts[field]} conflicting={fieldConflicts.has(field)} working={busy} advanced={Boolean(lastConfirmed)} onConfirm={confirm}
           gwpPreview={report.gwp_preview} pdf={pdf} />
       </div>
     </div>
@@ -637,6 +634,11 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
         </div>
       </section>
       {confirmationMessage && <p className="review-confirmed" role="status">{confirmationMessage}</p>}
+      {run.status === "complete" && run.error && <p className="notice" role="status">{run.error}</p>}
+      {run.can_retry_ocr && notice && <div className="run-notice">
+        <p>{notice}</p>
+        <button type="button" className="button secondary" onClick={onProcess} disabled={working}>Retry OCR from saved PDF</button>
+      </div>}
       {required.length > 0 && <section className="run-review-prompt" aria-labelledby="required-review-title">
         <header>
           <div>
@@ -662,7 +664,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
           })}
         </ul>
       </section>}
-      {notice && <details className="run-notice">
+      {notice && !run.can_retry_ocr && <details className="run-notice">
         <summary>OCR details</summary>
         <p>{notice}</p>
       </details>}

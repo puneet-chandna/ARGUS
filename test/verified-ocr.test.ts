@@ -10,7 +10,7 @@ test("durable OCR stores grounded quotes and rebases citations for identical ren
   });
   const part = { applicable: true, rate: "1", status: "resolved", reason: "test" } as const;
   const clean: Report = {
-    status: "resolved", od: part, tp: part, trace: [], rule_version: "test", business_type: null,
+    status: "resolved", od: part, tp: part, trace: [], blockers: [], rule_version: "test", business_type: null,
     confidence: { level: "high", reason: "test" },
     filename: "old.pdf", checksum: "a".repeat(64), extraction_version: EXTRACTION_VERSION,
     reader_failures: {}, clarifications: [],

@@ -3,7 +3,6 @@ import { HttpError } from "./http.ts";
 import { conflictFields, requiredReviewFields } from "./review-fields.ts";
 import type { CacheCheck, RunProgress } from "./progress.ts";
 import { applyRating, needsBrokerageGwp, type Report } from "./report.ts";
-import { RATE_CARD_VERSION } from "./rating/index.ts";
 import type { Extraction } from "./ingestion/index.ts";
 import { verifiedOcr, verifiedOcrProfile } from "./verified-ocr.ts";
 import { pdfObject, uuid } from "./upload.ts";
@@ -32,6 +31,8 @@ export type StoredRun = {
   cache_result: CacheCheck["cache"] | null;
   duration_ms: number | null;
   result: Report | null;
+  ocr_retry_attempted_at?: string | null;
+  reread_attempted_at?: string | null;
   error: string | null;
 };
 
@@ -41,10 +42,21 @@ const summary = "id,filename,display_name,pinned,deleting_at,checksum,status,err
 type UploadIdentity = { filename: string; digest: string; allowCloud: boolean };
 export type HistoryCursor = { pinned: boolean; createdAt: string; id: string };
 
+export function canRetryOcr(run: StoredRun) {
+  const result = run.result;
+  return run.status === "complete" && run.allow_cloud && !run.ocr_retry_attempted_at && !run.deleting_at &&
+    !run.pdf_deleted_at && !run.pdf_cleanup_pending && result?.status === "ambiguous" &&
+    Object.keys(result.reader_failures ?? {}).length > 0 && Boolean(result.blockers?.some(blocker =>
+      blocker.kind === "policy_fact" && blocker.fields.some(field =>
+        !["accepted", "confirmed_by_reviewer"].includes(result.fields[field]?.status))));
+}
+
 export function present(run: StoredRun, includeResult = true) {
   const { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, result, lease_until, progress, analysis_mode, ocr_mode, cache_result, duration_ms, pdf_deleted_at, pdf_cleanup_pending } = run;
-  return { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, lease_until, progress, analysis_mode, ocr_mode, cache_result, duration_ms, pdf_deleted_at, pdf_cleanup_pending, decision: result?.status ?? null, ...(includeResult ? { result } : {}) };
+  return { id, filename, display_name, pinned, deleting_at, checksum, status, error, revision, created_at, lease_until, progress, analysis_mode, ocr_mode, cache_result, duration_ms, pdf_deleted_at, pdf_cleanup_pending, can_retry_ocr: canRetryOcr(run), decision: result?.status ?? null, ...(includeResult ? { result } : {}) };
 }
+
+const retryRestored = "The OCR retry was interrupted. Your previous analysis is still available.";
 
 export function runStore(client: SupabaseClient, owner: string) {
   // Every service-role query carries the verified reviewer ID.
@@ -54,7 +66,7 @@ export function runStore(client: SupabaseClient, owner: string) {
   };
   const bucket = client.storage.from(BUCKET);
   async function wantsOriginalDeleted(result: Report | null) {
-    if (!result || requiredReviewFields(result).length) return false;
+    if (!result || result.status === "ambiguous" || requiredReviewFields(result).length) return false;
     const { data, error } = await client.from("argus_user_preferences")
       .select("delete_originals").eq("owner_id", owner).maybeSingle();
     if (error) throw error;
@@ -81,6 +93,15 @@ export function runStore(client: SupabaseClient, owner: string) {
         .neq("status", "uploading").maybeSingle<StoredRun>();
       if (error) throw error;
       if (!data) throw new HttpError(404, "Run not found.");
+      const now = new Date().toISOString();
+      if (data.status === "processing" && data.result && !data.deleting_at && Date.parse(data.lease_until ?? "") <= Date.parse(now)) {
+        const restored = await client.from(TABLE).update({ status: "complete", progress: null, lease_until: null,
+          revision: data.revision + 1, error: retryRestored })
+          .match({ ...owned(id), status: "processing", revision: data.revision }).is("deleting_at", null)
+          .lte("lease_until", now).select("*").maybeSingle<StoredRun>();
+        if (restored.error) throw restored.error;
+        return restored.data ?? this.get(id);
+      }
       return data;
     },
     async refreshDecision(run: StoredRun) {
@@ -88,11 +109,9 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (run.deleting_at || run.status !== "complete" || !result) return run;
       const legacyTata = result.tp.reason === "The workbook does not confirm which payout cluster covers the policy’s RTO.";
       const legacyGwp = needsBrokerageGwp(result.fields.eligible_private_car_gwp);
-      const rerate = legacyTata || legacyGwp ||
-        [RATE_CARD_VERSION, `${RATE_CARD_VERSION}-hdfc-od-v2`, `${RATE_CARD_VERSION}-hdfc-od-v3`].includes(result.rule_version);
-      const refreshed = rerate ? applyRating(result) : result;
-      const changed = legacyTata || legacyGwp || refreshed.rule_version !== result.rule_version;
-      const cancelCleanup = run.pdf_cleanup_pending && requiredReviewFields(refreshed).length > 0;
+      const refreshed = applyRating(result);
+      const changed = legacyTata || legacyGwp || !result.blockers || refreshed.rule_version !== result.rule_version;
+      const cancelCleanup = run.pdf_cleanup_pending && (refreshed.status === "ambiguous" || requiredReviewFields(refreshed).length > 0);
       if (!changed && !cancelCleanup) return run;
       const { data, error } = await client.from(TABLE).update({
         ...(changed && { result: refreshed }), ...(cancelCleanup && { pdf_cleanup_pending: false }), revision: run.revision + 1,
@@ -131,11 +150,18 @@ export function runStore(client: SupabaseClient, owner: string) {
       const stored = await bucket.upload(pdfObject(owner, run.id), input.bytes, {
         contentType: "application/pdf", upsert: true, cacheControl: "0",
       });
-      if (stored.error) throw stored.error;
-      const queued = await client.from(TABLE).update({ status: "queued" })
-        .match({ ...owned(run.id), status: "uploading" }).select("*").maybeSingle<StoredRun>();
-      if (queued.error) throw queued.error;
-      return queued.data ?? this.get(run.id);
+      if (!stored.error) {
+        const queued = await client.from(TABLE).update({ status: "queued" })
+          .match({ ...owned(run.id), status: "uploading" }).is("deleting_at", null).select("*").maybeSingle<StoredRun>();
+        if (queued.error) throw queued.error;
+        if (queued.data) return queued.data;
+      }
+      // A concurrent retry or history recovery can queue the run and close the Storage write.
+      const settled = await client.from(TABLE).select("*").match(owned(run.id))
+        .neq("status", "uploading").is("deleting_at", null).maybeSingle<StoredRun>();
+      if (settled.error) throw settled.error;
+      if (settled.data) return settled.data;
+      throw stored.error ?? new HttpError(409, "This upload is no longer available. Choose the PDF again.");
     },
     async pdf(id: string) {
       const run = await this.get(id);
@@ -149,6 +175,14 @@ export function runStore(client: SupabaseClient, owner: string) {
       const { id: runId } = owned(id);
       const { data, error } = await client.rpc("argus_claim_run", { run_id: runId, reviewer_id: owner })
         .maybeSingle<StoredRun>();
+      if (error) throw error;
+      return data;
+    },
+    async claimOcrRetry(run: StoredRun): Promise<StoredRun | null> {
+      const { id: runId } = owned(run.id);
+      const { data, error } = await client.rpc("argus_claim_ocr_retry", {
+        run_id: runId, reviewer_id: owner, expected_revision: run.revision,
+      }).maybeSingle<StoredRun>();
       if (error) throw error;
       return data;
     },
@@ -187,6 +221,14 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (error) throw error;
       return data === true;
     },
+    async reserveReread(claim: StoredRun): Promise<boolean> {
+      const { data, error } = await client.from(TABLE).update({ reread_attempted_at: new Date().toISOString() })
+        .match({ ...owned(claim.id), status: "processing", revision: claim.revision, allow_cloud: true })
+        .is("deleting_at", null).is("reread_attempted_at", null)
+        .gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
+      if (error) throw error;
+      return Boolean(data);
+    },
     async cachedPages(checksum: string) {
       const { data, error } = await client.from(TABLE).select("pages_total")
         .match({ owner_id: owner, checksum, status: "complete" }).is("deleting_at", null)
@@ -221,7 +263,9 @@ export function runStore(client: SupabaseClient, owner: string) {
       const progress: RunProgress = { pagesDone: 0, pagesTotal: run.pages_total, startedAt: run.created_at, ...run.progress,
         stage: "cancelled", status: "cancelled", stageStartedAt: now, updatedAt: now };
       const { data, error } = await client.from(TABLE).update({
-        status: "cancelled", progress, lease_until: null, revision: run.revision + 1, error: "Analysis was cancelled.",
+        status: run.result ? "complete" : "cancelled", progress: run.result ? null : progress,
+        lease_until: null, revision: run.revision + 1,
+        error: run.result ? "The OCR retry was cancelled. Your previous analysis is still available." : "Analysis was cancelled.",
       }).match({ ...owned(id), revision: run.revision }).in("status", ["queued", "processing"])
         .select("*").maybeSingle<StoredRun>();
       if (error) throw error;
@@ -231,12 +275,14 @@ export function runStore(client: SupabaseClient, owner: string) {
     async finish(claim: StoredRun, result: Report | null, errorMessage: string | null, ocrMode: StoredRun["ocr_mode"],
       progress: RunProgress, stage_ms: Partial<Record<RunProgress["stage"], number>>, ocr_seconds_per_page: number | null,
       analysis_mode: StoredRun["analysis_mode"], cache_result: StoredRun["cache_result"]) {
-      const deleteOriginal = await wantsOriginalDeleted(result);
-      const { data, error } = await client.from(TABLE).update({
-        status: result ? "complete" : "failed", result, error: errorMessage, lease_until: null,
+      const final = claim.result && !result ? { status: "complete", progress: null, error: retryRestored } : {
+        pdf_cleanup_pending: await wantsOriginalDeleted(result),
+        status: result ? "complete" : "failed", result, error: errorMessage,
         progress, stage_ms, ocr_seconds_per_page, analysis_mode, cache_result, duration_ms: Date.now() - Date.parse(progress.startedAt),
-        revision: claim.revision + 1, ocr_mode: ocrMode, pdf_cleanup_pending: deleteOriginal,
-      }).match({ ...owned(claim.id), status: "processing", revision: claim.revision })
+        ocr_mode: ocrMode,
+      };
+      const { data, error } = await client.from(TABLE).update({ ...final, lease_until: null, revision: claim.revision + 1 })
+        .match({ ...owned(claim.id), status: "processing", revision: claim.revision })
         .gt("lease_until", new Date().toISOString()).select("*").maybeSingle<StoredRun>();
       if (error) throw error;
       return data ?? this.get(claim.id);
@@ -249,7 +295,7 @@ export function runStore(client: SupabaseClient, owner: string) {
       if (!pending.data) return;
       const current = await this.refreshDecision(pending.data);
       // A concurrent update can leave the legacy decision in place after the refresh attempt.
-      if (!current.pdf_cleanup_pending || current.deleting_at || !current.result ||
+      if (!current.pdf_cleanup_pending || current.deleting_at || !current.result || current.result.status === "ambiguous" ||
           requiredReviewFields(applyRating(current.result)).length) return;
       const { error: storageError } = await bucket.remove([pdfObject(owner, id)]);
       if (storageError) throw storageError;

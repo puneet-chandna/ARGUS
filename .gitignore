@@ -2,6 +2,7 @@
 /AGENTS.md
 /docs/*
 !/docs/assets/
+!/docs/development.md
 /notes/
 /.local/
 .env

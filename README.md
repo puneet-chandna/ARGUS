@@ -46,7 +46,7 @@ Argus cites the policy page for each fact. It cites the cells that map those fac
 
 ### 02 · "Cannot determine" is a valid answer
 
-If the rate card cannot establish a rate, Argus marks the run as Unsupported and shows the blocker. The screenshot shows an archived Tata AIG decision. The current rate lookup resolves this sample at 38% base TP.
+If the grid documents a coverage gap, Argus marks the run as Unsupported. Missing or conflicting evidence leads to Needs review. The screenshot shows an archived Tata AIG decision; the current sample needs review, as explained in its linked trace.
 
 <img src="docs/assets/02-unsupported.png" alt="A result screen with the Unsupported state and the reason." width="100%">
 
@@ -98,6 +98,8 @@ The Next.js API stores uploads and renders pages with Poppler for two independen
 
 Independent OCR increases latency on new PDFs. The app reuses eligible readings for identical PDF bytes within the same reviewer account and rerates against the current grids. Conflicting readings or missing rating inputs lead to review. A published coverage gap leads to Unsupported. An interrupted job can resume from its saved PDF after its lease expires.
 
+When an unread policy fact blocks a rate and its likely page is known, Argus can attempt one targeted re-read of that original page. It preserves the initial evidence, counts a repeated reader as the same source, and keeps grounded conflicts for reviewer confirmation. A re-read failure leaves the initial result available. A completed analysis with rate-blocking OCR failures can be retried once from its saved original, using its existing cloud consent and preserving confirmed facts.
+
 ## Sample results
 
 These four traces replay source-reviewed facts from the supplied policies through the app’s rating engine.
@@ -107,13 +109,17 @@ These four traces replay source-reviewed facts from the supplied policies throug
 | HDFC ERGO, comprehensive | Needs review. Zone 2 OD needs eligible GWP. Package TP is unsupported. | [JSON](submission/pvt-car-comprehensive-hdfc-ergo.json) |
 | Go Digit, stand-alone TP | Resolved. TP 29.5%. | [JSON](submission/pvt-car-satp-go-digit.json) |
 | Reliance, comprehensive | Needs review. The workbook does not establish OD applicability on the policy start date. Package TP is unsupported. | [JSON](submission/pvt-car-comprehensive-reliance.json) |
-| Tata AIG, stand-alone TP | Resolved. Base TP 38%. | [JSON](submission/pvt-car-satp-tata-aig.json) |
+| Tata AIG, stand-alone TP | Needs review. The printed body type does not establish private-car classification. | [JSON](submission/pvt-car-satp-tata-aig.json) |
 
 
 
 ## Data and storage
 
 Argus saves originals in a private Supabase Storage bucket and saves results, evidence, and job state in Supabase Postgres. The API checks ownership before serving either artifact. Supabase keeps both independently of the browser and app container, so saved runs can reopen after sign-in, app restart, and redeployment. If automatic original deletion is enabled, Argus retains the PDF through required review and preserves the structured analysis after deletion.
+
+## Development
+
+See [the development guide](docs/development.md) for setup, local runs, testing and deployment.
 
 ## Credits
 

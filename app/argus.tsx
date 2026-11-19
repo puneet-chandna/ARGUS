@@ -550,9 +550,10 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
     onLocation(`/workspace#${id}`);
   }
 
-  async function process(id: string) {
-    const { run: next } = await api<{ run: Run }>(`/api/runs/${id}`, { method: "POST" });
-    if (selected.current === id) {
+  async function process(id: string, retryRevision?: number) {
+    const { run: next } = await api<{ run: Run }>(`/api/runs/${id}`, retryRevision === undefined
+      ? { method: "POST" } : json("POST", { retryOcr: true, revision: retryRevision }));
+    if (selected.current === id && (retryRevision === undefined || pending(next))) {
       setFailedReason("");
       lastProgress.current = null;
       setAttempt(n => n + 1);
@@ -751,7 +752,8 @@ function Workspace({ onUnauthorized, sessionError, historyOpen, setHistoryOpen, 
 
   // Keep the already mounted report subtree unchanged during the synchronous view swap.
   const preparedResult = useMemo(() => run && <RunResult key={run.id} run={run}
-    preferences={session.preferences} working={working} onProcess={() => action(() => process(run.id))}
+    preferences={session.preferences} working={working}
+    onProcess={() => action(() => process(run.id, run.can_retry_ocr ? run.revision : undefined))}
     onConfirm={value => confirm(run.id, value)} />, [run, session.preferences, working]);
 
   const preparing = !run && Boolean(failedReason && !submitting);

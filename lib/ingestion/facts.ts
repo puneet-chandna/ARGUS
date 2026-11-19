@@ -29,6 +29,7 @@ export type FieldDecision = {
   status: "accepted" | "needs_review" | "rejected" | "confirmed_by_reviewer";
   reason: string;
   evidence: Evidence[];
+  rejected_evidence?: Evidence[];
   confirmation?: Confirmation;
 };
 export const CLARIFIABLE = new Set(["conflicting_readings", "ambiguous_date"]);
@@ -195,6 +196,24 @@ function documentHeading(candidate: Candidate) {
     || field === "policy_type" && /\bpolicy\b/.test(comparable(value)) && Boolean(policyCoverage(value));
 }
 
+function coverageDate(field: Field, value: string, quote: string) {
+  const expected = canonical(field, value);
+  if (!expected) return false;
+  const text = digits(quote);
+  const dates = [...text.matchAll(/\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}[\s-][a-z]{3,9}[\s-]\d{4})\b/gi)];
+  const period = /\b(?:insurance|policy|cover|coverage|validity|valid)\b/i.test(text);
+  return dates.some((date, index) => {
+    if (canonical(field, date[0]) !== expected) return false;
+    const previous = dates[index - 1];
+    const label = comparable(text.slice(previous ? previous.index + previous[0].length : 0, date.index));
+    if (/\b(?:issue|issued|issuance|proposal|payment|receipt)\b/.test(label)) return false;
+    if (field === "start_date") return !/\b(?:expiry|expiration|end|until|to)\b/.test(label) &&
+      (/\b(?:start|commencement|inception|effective)\b/.test(label) || period && /\b(?:from|period)\b/.test(label));
+    return !/\b(?:start|commencement|inception|from)\b/.test(label) &&
+      (/\b(?:expiry|expiration|end|until)\b/.test(label) || period && /\bto\b/.test(label));
+  });
+}
+
 export function grounded(candidate: Candidate, transcript: string) {
   return groundedOnPage(candidate, normalizedLines(transcript));
 }
@@ -219,6 +238,7 @@ function groundedOnPage(candidate: Candidate, lines: string[], previousSections 
     !/(?:%|\b(?:percentage|percent|per cent)\b)/.test(context) || /(?:₹|\b(?:inr|rs|rupees?)\b)/.test(context))) return false;
   const label = LABELS[field];
   if (label && !label.test(context)) return false;
+  if (field === "start_date" || field === "end_date") return coverageDate(field, value, quote);
   if (field.endsWith("_premium")) {
     const basis = field.split("_")[0] as keyof typeof PREMIUM_BASIS;
     if (!/\bpremium\b/.test(context) || !PREMIUM_BASIS[basis].test(context)) return false;

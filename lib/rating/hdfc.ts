@@ -17,6 +17,12 @@ const file = data.files["hdfc-ergo"].split("/").at(-1)!;
 const { rates, slabs } = data.hdfc;
 const effectiveDate = "2025-02-01";
 const effectiveHeading = "Effective from 1st Feb’25 heading";
+const newBusinessFootnote = "New Business will be considered as NCB footnote below Zone 2";
+const karnatakaAudit = "Report-of-the-Comptroller-and-Auditor-General-of-India-on-State-Revenues-for-the-period-ended-March-2024--Report-No.-3-of-2026-069c60d8a133e16.82085064.pdf";
+const karnatakaAuditUrl = `https://cag.gov.in/uploads/download_audit_report/2026/${karnatakaAudit}`;
+const karnatakaCouncil = "usq732(21022024).pdf";
+const karnatakaCouncilUrl = `https://kla.kar.nic.in/council/Replies/unstarred/21022024/${karnatakaCouncil}`;
+const bengaluruUrbanOffices = new Set([41, 50, 51, 53, 59]);
 
 function decimal(value = "", prefix = /^(?:₹|INR)\s*/i): string | null {
   const number = value.trim().replace(prefix, "");
@@ -56,11 +62,11 @@ export function hdfc(policy: Facts): Parts {
   const cite = (step: string, page: number, row: string, policy_fields?: string[]) =>
     trace.push({ step, sources: [{ file, page, row }], ...(policy_fields && { policy_fields }) });
   if (policy.policy_type === "satp") {
-    cite("The private-car grid excludes SATP from slab eligibility and publishes no SATP payout.", 1,
-      "Zone 1 and Zone 2 coverage headings; slab footnote");
+    const reason = "The private-car grid excludes SATP from slab eligibility and publishes no SATP rate.";
+    cite(reason, 1, "Zone 1 and Zone 2 coverage headings; slab footnote");
     return {
       od: component("inapplicable", "Stand-alone TP policy."),
-      tp: component("unsupported", "The supplied HDFC grid has no SATP rate."),
+      tp: component("unsupported", reason),
       trace,
     };
   }
@@ -89,6 +95,12 @@ export function hdfc(policy: Facts): Parts {
     return finish("ambiguous", reason, null, ["rto"]);
   }
   const state = rto.slice(0, 2);
+  if (state === "KA" && /[A-Z]$/.test(rto)) {
+    const reason = "Confirm the numeric Karnataka RTO office code from the policy schedule.";
+    trace.push({ step: reason, sources: [{ file: karnatakaAudit, url: karnatakaAuditUrl, page: 186,
+      row: "Appendix 5.5, RTO Code column (printed page 161)" }], policy_fields: ["rto"] });
+    return finish("ambiguous", reason, null, ["rto"]);
+  }
   let geography = states[state];
   const local = locals[state];
   if (local) {
@@ -103,6 +115,28 @@ export function hdfc(policy: Facts): Parts {
       const reason = `The ${name} row distinguishes RTO locations. A verified city or district is required to choose a zone.`;
       cite(reason, 1, `Geography, ${region} — ${name} (Zone-1 and Zone-2)`);
       return finish("ambiguous", reason, null, ["rto_location"]);
+    }
+    if (state === "KA") {
+      // shortcut: check the audited offices and listed Bengaluru Urban offices, extend when the grid defines its metro boundary.
+      const code = Number(rto.slice(2));
+      const urbanOffice = bengaluruUrbanOffices.has(code);
+      const bengaluru = (code >= 1 && code <= 5) || urbanOffice;
+      const outsideBengaluru = (code >= 6 && code <= 40) || code === 42 || (code >= 44 && code <= 49) ||
+        (code >= 54 && code <= 56) || (code >= 63 && code <= 71);
+      if ((bengaluru && matchesRest) || (outsideBengaluru && matchesCity)) {
+        const place = bengaluru ? "in Bengaluru" : "outside Bengaluru";
+        const reason = `The RTO code ${rto} identifies an office ${place}. The policy RTO location selects the other Karnataka zone. Confirm the RTO code and location.`;
+        const office = `KA${String(code).padStart(2, "0")}`;
+        const reviewFields = ["rto", "rto_location"];
+        trace.push({ step: reason, sources: [
+          { file, page: 1, row: `Geography, ${region} — ${name} (Zone-1 and Zone-2)` },
+          { file: karnatakaAudit, url: karnatakaAuditUrl, page: code <= 41 ? 186 : 187,
+            row: `Appendix 5.5, ${office} (printed page ${code <= 41 ? 161 : 162})` },
+          ...(urbanOffice ? [{ file: karnatakaCouncil, url: karnatakaCouncilUrl,
+            row: `LCQ-732, Annexure 1, Bengaluru Urban, ${office}` }] : []),
+        ], policy_fields: reviewFields });
+        return finish("ambiguous", reason, null, reviewFields);
+      }
     }
     geography = [1, region, name, matchesCity ? cityZone : restZone];
   }
@@ -125,7 +159,7 @@ export function hdfc(policy: Facts): Parts {
   const ncb = decimal(policy.current_ncb?.trim().replace(/%$/, ""));
   const validNcb = ncb !== null && compareToWhole(ncb, 100) <= 0 ? ncb : null;
   const ncbColumns = newBusiness || (validNcb !== null && compareToWhole(validNcb, 0) > 0) ? [1] :
-    validNcb !== null ? [2] : [1, 2];
+    validNcb !== null && policy.business_type ? [2] : [1, 2];
   const columns = petrol ? [0] : nonPetrol ? ncbColumns : [0, ...ncbColumns];
   const offset = cover === "SAOD" ? 3 : 0;
   let slab = 0;
@@ -149,6 +183,9 @@ export function hdfc(policy: Facts): Parts {
   if (validNcb !== null && !newBusiness) {
     cite(`Current NCB is ${validNcb}%.`, 1, `Zone ${zone}, ${cover} NCB column headings`, ["current_ncb"]);
   }
+  if (newBusiness && (nonPetrol || !fuel)) {
+    cite("The grid treats new business as NCB for OD lookup.", 1, newBusinessFootnote, ["business_type"]);
+  }
   const rows = gwp === null ? rates[zone] : [rates[zone][slab]];
   const sameRate = rows.every(row => columns.every(column => row[offset + column] === row[offset + columns[0]]));
   if (!fuel && sameRate) {
@@ -157,9 +194,8 @@ export function hdfc(policy: Facts): Parts {
   }
 
   if (gwp === null) {
-    const reason = `Zone ${zone}. Confirm eligible private-car GWP to select the OD slab.`;
-    cite("The slab uses comprehensive plus stand-alone OD private-car GWP and excludes stand-alone TP. The policy’s net OD premium does not establish this input.",
-      1, "Slab footnote immediately below Zone 2");
+    const reason = `Zone ${zone}. Confirm eligible private-car GWP to select the OD slab. The slab uses comprehensive plus stand-alone OD GWP and excludes stand-alone TP.`;
+    cite(reason, 1, "Slab footnote immediately below Zone 2");
     const result = finish("ambiguous", reason, null, ["eligible_private_car_gwp"]);
     const premium = cover === "Package" ? packagePremium(policy) : undefined;
     if (premium) {
@@ -175,6 +211,15 @@ export function hdfc(policy: Facts): Parts {
     return result;
   }
   if ((!petrol && !nonPetrol && Boolean(fuel)) || !sameRate) {
+    if (nonPetrol && validNcb !== null && !policy.business_type) {
+      const fields = ["previous_insurer", "business_type"];
+      const reason = "The grid treats new business as NCB even when current NCB is 0%. Confirm the business type or previous insurer to select the OD column.";
+      trace.push({ step: reason, sources: [
+        { file, page: 1, row: newBusinessFootnote },
+        { file, page: 1, row: `Zone ${zone}, ${slabs[slab]} — ${cover}, Non-Petrol NCB and N-NCB` },
+      ], policy_fields: [...fields, "current_ncb"] });
+      return finish("ambiguous", reason, null, fields);
+    }
     const field = nonPetrol ? "current_ncb" : "fuel";
     const reason = nonPetrol ? "Confirm current NCB to select the Non-Petrol column." :
       "Confirm fuel type to select the applicable rate column.";

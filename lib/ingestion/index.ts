@@ -17,6 +17,16 @@ export type Extraction = {
   reader_failures: Record<number, Partial<Record<Reader, string>>>;
   fields: Record<string, FieldDecision>;
   clarifications: Confirmation[];
+  reread?: { page: number; fields: string[]; reader: Reader; protocol: string; outcome: "accepted" | "unresolved" | "failed" };
+};
+
+export type RereadContext = {
+  reads: PageRead[];
+  pageCount: number;
+  signal: AbortSignal;
+  cancelledSignal?: AbortSignal;
+  render: (page: number) => Promise<Buffer>;
+  haltedReaders: ReadonlySet<Reader>;
 };
 
 export const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -102,6 +112,7 @@ export function extract(
   progress?: (completed: number, total: number, event: { page?: number; completedPages: number[]; partial?: { insurer?: string; vehicle?: string } }) => Promise<void>,
   onSendToCloud?: (page: number) => void,
   signal?: AbortSignal,
+  enrich?: (extraction: Extraction, context: RereadContext) => Promise<Extraction>,
 ): Promise<Extraction> {
   return withPdf(pdf, async (file, count) => {
     const timeout = AbortSignal.timeout(12 * 60_000);
@@ -214,7 +225,7 @@ export function extract(
     for (let page = nextPage; page <= count; page++) {
       failures[page] = {"sarvam": "ocr_deadline", "nvidia-super-vl": "ocr_deadline"};
     }
-    return {
+    const extraction: Extraction = {
       filename,
       checksum: createHash("sha256").update(pdf).digest("hex"),
       extraction_version: EXTRACTION_VERSION,
@@ -222,5 +233,7 @@ export function extract(
       fields: decide(filename, reads, Object.keys(failures).length === 0),
       clarifications: [],
     };
+    return enrich ? enrich(extraction, { reads, pageCount: count, signal: deadline, cancelledSignal: signal,
+      render: page => renderPage(file, page, deadline), haltedReaders: new Set(halted.keys()) }) : extraction;
   });
 }

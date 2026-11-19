@@ -55,15 +55,23 @@
       ]
     },
     "vehicle_class": {
-      "value": "private_car",
-      "status": "accepted",
-      "reason": "manual_source_verification",
+      "value": null,
+      "status": "needs_review",
+      "reason": "vehicle_class_not_printed",
       "evidence": [
         {
           "file": "pvt-car-satp-tata-aig.pdf",
           "page": 4,
-          "raw": "private_car",
-          "method": "manual_source_verification"
+          "raw": "HATCH BACK",
+          "method": "manual_source_verification",
+          "quote": "Body Type: HATCH BACK"
+        },
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 7,
+          "raw": "",
+          "method": "manual_source_verification",
+          "quote": "Limitations as to use: The Policy covers use of the vehicle for any purpose other than a) Hire or Reward"
         }
       ]
     },
@@ -233,9 +241,9 @@
     "applicable": false
   },
   "tp": {
-    "status": "resolved",
-    "reason": "DELHI standard-grid base on net premium. Policy-specific and other overrides take priority.",
-    "rate": "38",
+    "status": "ambiguous",
+    "reason": "Confirm whether the policy is for a private car.",
+    "rate": null,
     "applicable": true
   },
   "trace": [
@@ -279,17 +287,6 @@
           "file": "pvt-car-satp-tata-aig.pdf",
           "page": 1,
           "raw": "2027-03-31",
-          "method": "manual_source_verification"
-        }
-      ]
-    },
-    {
-      "step": "vehicle class: private_car",
-      "sources": [
-        {
-          "file": "pvt-car-satp-tata-aig.pdf",
-          "page": 4,
-          "raw": "private_car",
           "method": "manual_source_verification"
         }
       ]
@@ -444,144 +441,73 @@
       ]
     },
     {
-      "step": "The policy’s RTO location matches the DELHI payout column.",
+      "step": "Confirm whether the policy is for a private car.",
       "sources": [
         {
           "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "General Guidelines",
-          "cells": "C10"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
           "sheet": "Pvtcar",
-          "cells": "V5"
+          "cells": "F1"
         },
         {
           "file": "pvt-car-satp-tata-aig.pdf",
           "page": 4,
-          "raw": "Delhi",
-          "method": "manual_source_verification"
+          "raw": "HATCH BACK",
+          "method": "manual_source_verification",
+          "quote": "Body Type: HATCH BACK"
+        },
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 7,
+          "raw": "",
+          "method": "manual_source_verification",
+          "quote": "Limitations as to use: The Policy covers use of the vehicle for any purpose other than a) Hire or Reward"
         }
       ],
       "policy_fields": [
-        "rto_location"
-      ]
-    },
-    {
-      "step": "The standard grid applies to net premium. Policy-specific and other overrides take priority.",
-      "sources": [
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "General Guidelines",
-          "cells": "C7"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "General Guidelines",
-          "cells": "C11:C17"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "F2:F3"
-        }
-      ]
-    },
-    {
-      "step": "Every vehicle Type gives 38% base TP for CNG stand-alone TP renewal.",
-      "sources": [
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G511:L511"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G515:L515"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G519:L519"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G523:L523"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G527:L527"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G531:L531"
-        },
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "G535:L535"
-        }
-      ]
-    },
-    {
-      "step": "The DELHI column gives 38% base TP across all vehicle Types.",
-      "sources": [
-        {
-          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
-          "sheet": "Pvtcar",
-          "cells": "V511, V515, V519, V523, V527, V531, V535"
-        },
-        {
-          "file": "pvt-car-satp-tata-aig.pdf",
-          "page": 4,
-          "raw": "CNG",
-          "method": "manual_source_verification"
-        },
-        {
-          "file": "pvt-car-satp-tata-aig.pdf",
-          "page": 4,
-          "raw": "private_car",
-          "method": "manual_source_verification"
-        },
-        {
-          "file": "pvt-car-satp-tata-aig.pdf",
-          "page": 1,
-          "raw": "Liability Only Policy",
-          "method": "manual_source_verification"
-        },
-        {
-          "file": "pvt-car-satp-tata-aig.pdf",
-          "page": 1,
-          "raw": "Tata AIG General Insurance Company Limited",
-          "method": "manual_source_verification"
-        },
-        {
-          "file": "pvt-car-satp-tata-aig.pdf",
-          "page": 11,
-          "raw": "Tata AIG General Insurance Co. Ltd.",
-          "method": "manual_source_verification"
-        }
-      ],
-      "policy_fields": [
-        "fuel",
-        "vehicle_class",
-        "policy_type",
-        "insurer",
-        "previous_insurer",
-        "business_type"
+        "vehicle_class"
       ]
     }
   ],
-  "status": "resolved",
-  "rule_version": "ts1-5a79a3ea91c8efa6-tata-rto-v2",
+  "status": "ambiguous",
+  "rule_version": "ts1-5a79a3ea91c8efa6-tata-rto-v5",
   "business_type": "renewal",
   "confidence": {
-    "level": "high",
-    "reason": "The supplied source evidence establishes the rate or coverage decision."
+    "level": "low",
+    "reason": "At least one applicable rate is undetermined."
   },
-  "rating_trace_start": 18
+  "rating_trace_start": 17,
+  "blockers": [
+    {
+      "component": "tp",
+      "reason": "Confirm whether the policy is for a private car.",
+      "sources": [
+        {
+          "file": "Tata AIG Standard Grid_Communication_Mar'26_F_v2_0212.xlsx",
+          "sheet": "Pvtcar",
+          "cells": "F1"
+        },
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 4,
+          "raw": "HATCH BACK",
+          "method": "manual_source_verification",
+          "quote": "Body Type: HATCH BACK"
+        },
+        {
+          "file": "pvt-car-satp-tata-aig.pdf",
+          "page": 7,
+          "raw": "",
+          "method": "manual_source_verification",
+          "quote": "Limitations as to use: The Policy covers use of the vehicle for any purpose other than a) Hire or Reward"
+        }
+      ],
+      "kind": "policy_fact",
+      "fields": [
+        "vehicle_class"
+      ]
+    }
+  ],
+  "review_fields": [
+    "vehicle_class"
+  ]
 }
