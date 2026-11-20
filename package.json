@@ -15,6 +15,7 @@
     "test": "node --test --test-isolation=none test/*.test.ts",
     "test:integration": "node --test --test-isolation=none test/integration/*.test.ts",
     "test:e2e": "playwright test",
+    "test:coverage": "node scripts/test-coverage.mjs",
     "capture:readme": "node scripts/capture-readme-assets.mjs"
   },
   "dependencies": {
@@ -30,6 +31,7 @@
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "monocart-coverage-reports": "^3.2.1",
     "typescript": "7.0.2"
   }
 }

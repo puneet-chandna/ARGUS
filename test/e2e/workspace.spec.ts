@@ -1,4 +1,5 @@
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test as base } from "./coverage";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -59,6 +60,86 @@ async function uploadPdf(page: Page, name: string, buffer: Buffer) {
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Broker commission" })).toBeVisible({ timeout: 15_000 });
 }
+
+test("saved-run settings recover from a failed save and persist rename, pin and deliberate deletion", async ({ page, reviewer }) => {
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await uploadPdf(page, "manage-policy.pdf", syntheticPdf("Synthetic policy schedule"));
+  const id = new URL(page.url()).hash.slice(1);
+  const actions = page.getByRole("button", { name: "Run actions", exact: true });
+  await actions.click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Run name", { exact: true }).fill("Reviewed policy");
+  await dialog.getByRole("checkbox", { name: "Pin to the top of Saved runs" }).check();
+  await page.route(`**/api/runs/${id}`, route => route.request().method() === "PATCH"
+    ? route.fulfill({ status: 503, json: { error: "Temporary save failure" } }) : route.continue());
+  await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Temporary save failure");
+  await expect(dialog.getByLabel("Run name", { exact: true })).toHaveValue("Reviewed policy");
+  await page.unroute(`**/api/runs/${id}`);
+  await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Saved policy runs" })).toContainText("Reviewed policy");
+  await page.reload();
+  await actions.click();
+  await expect(dialog.getByLabel("Run name", { exact: true })).toHaveValue("Reviewed policy");
+  await expect(dialog.getByRole("checkbox", { name: "Pin to the top of Saved runs" })).toBeChecked();
+  await dialog.getByRole("button", { name: "Delete run", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel deletion", exact: true }).click();
+  await expect(dialog.getByLabel("Run name", { exact: true })).toHaveValue("Reviewed policy");
+  await dialog.getByRole("button", { name: "Delete run", exact: true }).click();
+  await dialog.getByRole("button", { name: "Delete run and PDF", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "New analysis", exact: true })).toBeVisible();
+  expect((await page.request.get(`/api/runs/${id}`)).status()).toBe(404);
+  expect((await page.request.get(`/api/runs/${id}/pdf`)).status()).toBe(404);
+});
+
+test("security validates password confirmation and saves a verified password through the UI", async ({ page, reviewer }) => {
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await page.getByRole("link", { name: "Open profile" }).click();
+  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page.getByLabel("Current password", { exact: true }).fill(reviewer.password);
+  await page.getByLabel("New password", { exact: true }).fill("A different synthetic password 123!");
+  await page.getByLabel("Confirm new password", { exact: true }).fill("Mismatch");
+  const button = page.getByRole("button", { name: "Change password", exact: true });
+  await expect(button).toBeDisabled();
+  await expect(page.getByText("Passwords don’t match.", { exact: true })).toBeVisible();
+  await page.getByLabel("Confirm new password").fill("A different synthetic password 123!");
+  await button.click();
+  await expect(page.getByRole("status").getByText("Password changed.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Current password", { exact: true })).toHaveValue("");
+  await page.getByRole("button", { name: "Sign out", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "Sign in to Argus", exact: true })).toBeVisible();
+  await page.getByLabel("Email address").fill(reviewer.email);
+  await page.getByLabel("Password", { exact: true }).fill("A different synthetic password 123!");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Security", exact: true })).toBeVisible();
+});
+
+test("data settings recover from load failure and require confirmation before deleting originals", async ({ page, reviewer }) => {
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await page.route("**/api/profile?view=data", route => route.fulfill({ status: 503, json: { error: "Temporary settings failure" } }));
+  await page.goto("/profile/data");
+  await expect(page.getByRole("alert").filter({ hasText: "Temporary settings failure" })).toBeVisible();
+  await page.unroute("**/api/profile?view=data");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  const originals = page.getByRole("checkbox", { name: "Delete original PDFs after analysis" });
+  await originals.check();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Change automatic deletion?" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  const before = await page.request.get("/api/profile").then(response => response.json());
+  expect(before.preferences.delete_originals).toBe(false);
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await dialog.getByRole("button", { name: "Confirm settings", exact: true }).click();
+  await expect(page.getByRole("status").getByText("Preferences saved.", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(originals).toBeChecked();
+});
 
 test("the original Tata classification stays unresolved and its evidence and PDF reopen", async ({ page, reviewer }) => {
   const name = "pvt-car-satp-tata-aig.pdf";

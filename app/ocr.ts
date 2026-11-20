@@ -27,6 +27,12 @@ export function readerNotice(failures: Record<string, Record<string, string>> = 
   const codes = new Set(pages.flatMap(Object.values));
   const prefix = pages.length === 1 ? "One page is missing an independent reading." : `${pages.length} pages are missing an independent reading.`;
   const configuredReasons = Object.entries(reasons).filter(([reason]) => codes.has(reason)).map(([, label]) => label);
+  const billing = new Set(pages.flatMap(page => Object.entries(page).filter(([, code]) => code === "http_402")
+    .map(([reader]) => reader.startsWith("sarvam") ? "Sarvam" : reader.startsWith("nvidia") ? "NVIDIA" : "An OCR provider")));
+  for (const provider of billing) configuredReasons.push(`${provider} rejected the request because credits or billing quota are unavailable. Contact the workspace operator.`);
+  if (["http_401", "http_403"].some(code => codes.has(code))) configuredReasons.push("An OCR provider rejected its credentials. Contact the workspace operator.");
+  if (codes.has("http_429")) configuredReasons.push("An OCR provider reached its request limit. Try again later.");
+  if ([...codes].some(code => /^http_5\d\d$/.test(code))) configuredReasons.push("An OCR provider is temporarily unavailable. You can review the original PDF or retry later.");
   if (codes.has("cloud_not_authorized")) configuredReasons.push("This upload used cache only. No compatible readings were found for those pages.");
   if (codes.has("provider_timeout") || codes.has("sarvam_job_timeout")) configuredReasons.push("A reader timed out.");
   if (codes.has("ocr_deadline")) configuredReasons.push("Analysis reached its time limit before all pages could be checked.");

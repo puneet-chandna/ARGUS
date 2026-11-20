@@ -82,9 +82,9 @@ export function digit(policy: Facts): Parts {
     ({ od, tp: component(status, reason, rate), trace, ...(review_fields ? { review_fields } : {}) });
 
   if (policy.policy_type !== "satp") {
-    const reason = "This Go Digit lookup covers private-car stand-alone TP. The 4W New Business 1+3 sheet requires a separate lookup.";
+    const reason = "The 4W New Business 1+3 sheet publishes CD2 payouts without establishing the OD/TP component premium basis. The supplied evidence cannot establish a component rate for this policy.";
     cite(reason, source(TP, "B2:E2"), source(PACKAGE, "B2:I3"));
-    return { ...finish("unsupported", reason), od: component("unsupported", reason) };
+    return { ...finish("ambiguous", reason), od: component("ambiguous", reason) };
   }
   if (policy.vehicle_class !== "private_car") {
     const reason = "The 4W SATP lookup requires verified private-car classification.";

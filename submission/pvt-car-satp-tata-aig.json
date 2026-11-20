@@ -469,7 +469,7 @@
     }
   ],
   "status": "ambiguous",
-  "rule_version": "ts1-5a79a3ea91c8efa6-tata-rto-v6-evidence-v3",
+  "rule_version": "ts1-5a79a3ea91c8efa6-tata-rto-v7-evidence-v3",
   "business_type": "renewal",
   "confidence": {
     "level": "low",

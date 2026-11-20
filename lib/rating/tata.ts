@@ -184,7 +184,7 @@ export function tata(policy: Facts): Parts {
     if (!cluster) {
       const reason = "The policy’s RTO location does not match a unique payout cluster in the supplied grid.";
       cite(reason, source("General Guidelines", "C10"), source("Pvtcar", "M5:BO5"));
-      return finish("unsupported", reason);
+      return finish("ambiguous", reason);
     }
 
     const [column, label] = cluster;
@@ -226,9 +226,12 @@ export function tata(policy: Facts): Parts {
     const rowSources = eligible.map(([row]) => source("Pvtcar", `G${row}:L${row}`));
     if (value == null || new Set(eligible.map(([, type]) => type)).size !== types.size ||
         eligible.some(([, , , , , ncb, addOn, rates]) => ncb !== "All" || addOn !== "All" || rates[index] !== value)) {
-      const reason = "The supplied rows do not establish one TP rate across vehicle Types.";
-      cite(reason, source("Pvtcar", `${column}5`), ...rowSources);
-      return finish("unsupported", reason);
+      const noRate = !eligible.length || eligible.every(row => row[7][index] == null);
+      const reason = noRate ? "The supplied SATP rows publish no numeric TP rate for this fuel, business and cluster." :
+        "The supplied rows do not establish one TP rate across vehicle Types, and the applicable Type mapping is undocumented.";
+      cite(reason, source("Pvtcar", `${column}5`), ...rowSources,
+        ...eligible.map(([row]) => source("Pvtcar", `${column}${row}`)));
+      return finish(noRate ? "unsupported" : "ambiguous", reason);
     }
 
     cite("The standard grid applies to net premium. Policy-specific and other overrides take priority.",
@@ -257,5 +260,5 @@ export function tata(policy: Facts): Parts {
   const reason = "The supplied workbook lacks the vehicle Type and RTO cluster mappings needed to select a rate.";
   cite(reason, source("General Guidelines", "C10"), source("Pvtcar", "G5:BR5"),
     ...matches.map(([row]) => source("Pvtcar", `G${row}:L${row}`)));
-  return finish("unsupported", reason);
+  return finish("ambiguous", reason);
 }

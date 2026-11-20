@@ -41,6 +41,21 @@ test("Digit follows the original RTO-to-cluster and SATP segment rows", () => {
   assertSource(result, "4W SATP", "B293:E293");
 });
 
+test("Digit reports an unresolved component basis rather than a documented exclusion for its new-business sheet", () => {
+  for (const policy_type of ["Private Car Package Policy", "Private Car SAOD"]) {
+    const result = rate({ ...digit, policy_type, business_type: "new", make: "Tata", rto: "AP01" });
+    assert.equal(result.status, "ambiguous");
+    assert.equal(result.od.status, "ambiguous");
+    assert.equal(result.od.rate, null);
+    assert.equal(result.tp.rate, null);
+    assert.equal(result.tp.applicable, !policy_type.includes("SAOD"));
+    assert.match(result.od.reason, /component|premium basis/i);
+    assert.equal(result.review_fields, undefined, "Policy corrections cannot establish a missing grid basis");
+    assert.ok(result.blockers.every(blocker => blocker.kind === "grid"));
+    assertSource(result, "4W New Business 1+3", "B2:I3");
+  }
+});
+
 test("Digit asks for the next missing input only when its workbook branch needs it", () => {
   const missing = { ...digit, rto: "", fuel: "", engine_cc: "" };
   assert.deepEqual(rate(missing).review_fields, ["rto"]);
@@ -351,7 +366,7 @@ test("Tata AIG uses the unique policy RTO location and rates only unanimous TP r
   assert.ok(result.trace.some(step => /policy’s RTO location matches the DELHI/.test(step.step)));
   for (const location of ["Noida", "Delhi NCR"]) {
     const unresolved = rate({ ...facts, rto_location: location });
-    assert.equal(unresolved.status, "unsupported");
+    assert.equal(unresolved.status, "ambiguous");
     assert.equal(unresolved.tp.rate, null);
   }
   assert.deepEqual(rate({ ...facts, rto_location: "" }).review_fields, ["rto_location"]);
@@ -391,6 +406,27 @@ test("Tata AIG withholds TP when RTO jurisdiction contradicts the policy locatio
   assert.equal(rate({ ...facts, rto: "HR26", rto_location: "Haryana" }).tp.rate, "0");
 });
 
+test("Tata package mapping gaps stay unresolved rather than becoming coverage exclusions", () => {
+  const result = rate({ insurer: "Tata AIG", business_type: "renewal", policy_type: "Private Car Package Policy",
+    rto: "MH01", rto_location: "Mumbai", make: "Maruti", model: "Swift", fuel: "petrol", start_date: "2026-03-25" });
+  assert.equal(result.status, "ambiguous");
+  assert.equal(result.od.rate, null);
+  assert.equal(result.tp.rate, null);
+  assert.match(result.od.reason, /lacks.*mappings/);
+  assert.ok(result.blockers.every(blocker => blocker.kind === "grid" && !blocker.fields.length));
+  assertSource(result, "General Guidelines", "C10");
+});
+
+test("Tata differing SATP Type rates require grid clarification and cite the competing payout cells", () => {
+  const result = rate({ insurer: "Tata AIG", business_type: "new", policy_type: "Private Car SATP",
+    rto: "DL9C", rto_location: "Delhi", fuel: "diesel", start_date: "2026-03-25" });
+  assert.equal(result.status, "ambiguous");
+  assert.equal(result.tp.rate, null);
+  assert.ok(result.blockers.every(blocker => blocker.kind === "grid" && !blocker.fields.length));
+  assertSource(result, "Pvtcar", "V7");
+  assertSource(result, "Pvtcar", "V15");
+});
+
 test("Tata AIG checks the state of each named city payout column against the RTO code", () => {
   const facts = {
     insurer: "Tata AIG", previous_insurer: "Tata AIG", policy_type: "Private Car SATP",
@@ -427,7 +463,7 @@ test("Tata AIG checks the state of each named city payout column against the RTO
   }
   for (const rto_location of ["Karnataka", "Aurangabad", "Delhi NCR"]) {
     const result = rate({ ...facts, rto: "KA01", rto_location });
-    assert.deepEqual([result.tp.status, result.tp.rate], ["unsupported", null], rto_location);
+    assert.deepEqual([result.tp.status, result.tp.rate], ["ambiguous", null], rto_location);
     assertSource(result, "Pvtcar", "M5:BO5");
   }
   assertSource(rate({ ...facts, rto: "KA01", rto_location: "KA1" }), "Pvtcar", "AE5");

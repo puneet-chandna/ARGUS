@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { cacheKey, EXTRACTION_VERSION } from "./ingestion/providers.ts";
+import { cacheKey, EXTRACTION_VERSION, READER_LANES } from "./ingestion/providers.ts";
 import type { Extraction } from "./ingestion/index.ts";
 import type { Report } from "./report.ts";
 
 export function verifiedOcrProfile() {
   return createHash("sha256").update(JSON.stringify([
-    EXTRACTION_VERSION, cacheKey("sarvam", Buffer.alloc(0)), cacheKey("nvidia-super-vl", Buffer.alloc(0)),
+    EXTRACTION_VERSION, ...READER_LANES.flat().map(reader => cacheKey(reader, Buffer.alloc(0))),
     process.env.ARGUS_OCR_PAGES_PER_RUN || "20",
   ])).digest("hex");
 }

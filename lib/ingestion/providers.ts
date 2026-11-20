@@ -5,10 +5,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { FIELDS, type Box, type Candidate, type Field, type PageRead, type Reader } from "./facts.ts";
 
 const SARVAM = "https://api.sarvam.ai/doc-ai/v1/job";
+const SARVAM_CHAT = "https://api.sarvam.ai/v2/chat/completions";
 const NVIDIA = "https://integrate.api.nvidia.com/v1/chat/completions";
 const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
 const MODELS = {
   sarvam: "sarvam-vision-v1",
+  "sarvam-deepseek": "deepseekv4.1-flash-1017",
   "nvidia-super-vl": "nvidia/nemotron-3.5-super-vl-120b-a12b",
   "gemini-flash": "gemini-3.8-flash",
   "nvidia-mistral": "mistralai/mistral-large-4-1t-a52b",
@@ -18,11 +20,12 @@ const SUPER_VL_OPTIONS = {
   temperature: 0, max_tokens: 6500, chat_template_kwargs: { enable_thinking: false },
 };
 const MISTRAL_OPTIONS = { temperature: 0, max_tokens: 6500 };
+const DEEPSEEK_OPTIONS = { temperature: 0, max_tokens: 6500, reasoning_effort: "none" };
 const GEMINI_OPTIONS = { temperature: 0, maxOutputTokens: 12000, thinkingConfig: { thinkingLevel: "low" } };
 
 export const READER_LANES = [
   ["sarvam", "gemini-flash", "nvidia-mistral"],
-  ["nvidia-super-vl"],
+  ["nvidia-super-vl", "sarvam-deepseek"],
 ] as const;
 const PAGE_PROTOCOL = "brokerage-page-v2";
 export const EXTRACTION_VERSION = "brokerage-fields-v7";
@@ -185,7 +188,7 @@ function structured(reader: Reader, model: string, page: number, payload: unknow
   };
 }
 
-function chatRead(reader: "nvidia-super-vl" | "nvidia-mistral", response: unknown, page: number, legacy: boolean) {
+function chatRead(reader: "nvidia-super-vl" | "nvidia-mistral" | "sarvam-deepseek", response: unknown, page: number, legacy: boolean) {
   const { choices, model = MODELS[reader] } = object(response);
   if (typeof model !== "string" || (model !== MODELS[reader] &&
       !(reader === "nvidia-super-vl" && model === SUPER_VL_RETURNED_MODEL))) {
@@ -211,12 +214,14 @@ function endpoint() {
 export function cacheKey(reader: Reader, image: Uint8Array) {
   const routes = {
     sarvam: SARVAM,
+    "sarvam-deepseek": SARVAM_CHAT,
     "nvidia-super-vl": process.env.ARGUS_NVIDIA_ENDPOINT || NVIDIA,
     "nvidia-mistral": NVIDIA,
     "gemini-flash": GEMINI,
   };
   const options = {
     sarvam: SARVAM_SCHEMA,
+    "sarvam-deepseek": [PROMPT, SCHEMA, DEEPSEEK_OPTIONS],
     "nvidia-super-vl": [PROMPT, SCHEMA, SUPER_VL_OPTIONS],
     "nvidia-mistral": [PROMPT, SCHEMA, MISTRAL_OPTIONS],
     "gemini-flash": [PROMPT, SCHEMA, GEMINI_OPTIONS],
@@ -261,11 +266,12 @@ async function saveCached(reader: Reader, image: Buffer, payload: unknown) {
 }
 
 export function liveKey(reader: Reader) {
-  return reader === "sarvam" ? process.env.SARVAM_API_KEY?.trim()
+  return reader === "sarvam" || reader === "sarvam-deepseek" ? process.env.SARVAM_API_KEY?.trim()
     : reader === "gemini-flash" ? process.env.GEMINI_API_KEY?.trim() : process.env.NVIDIA_API_KEY?.trim();
 }
 
 export function liveOcrStatus() {
+  if (liveKey("sarvam")) return "ready";
   if (!liveKey("nvidia-super-vl")) return "ocr_not_configured";
   try {
     endpoint();
@@ -317,13 +323,15 @@ export async function readLive(reader: Reader, page: number, image: Buffer, dead
 
   if (reader !== "sarvam") {
     const superVl = reader === "nvidia-super-vl";
-    const result = await request(superVl ? endpoint() : NVIDIA, {
+    const deepseek = reader === "sarvam-deepseek";
+    const result = await request(deepseek ? SARVAM_CHAT : superVl ? endpoint() : NVIDIA, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" },
+      headers: { ...(deepseek ? { "api-subscription-key": key } : { Authorization: `Bearer ${key}` }),
+        "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
-        model: MODELS[reader], ...(superVl ? SUPER_VL_OPTIONS : MISTRAL_OPTIONS),
+        model: MODELS[reader], ...(deepseek ? DEEPSEEK_OPTIONS : superVl ? SUPER_VL_OPTIONS : MISTRAL_OPTIONS),
         stream: false,
-        ...(superVl ? { response_format: { type: "json_schema", json_schema: { name: "page_reading", schema } } } : {}),
+        ...(superVl || deepseek ? { response_format: { type: "json_schema", json_schema: { name: "page_reading", schema } } } : {}),
         messages: [{ role: "user", content: [
           { type: "text", text: `${prompt}\nReturn only JSON matching: ${JSON.stringify(schema)}` },
           { type: "image_url", image_url: { url: `data:image/png;base64,${image.toString("base64")}` } },

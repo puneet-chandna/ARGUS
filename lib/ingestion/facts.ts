@@ -11,7 +11,7 @@ export const FIELDS = [
 
 export type Field = typeof FIELDS[number];
 export type Box = [number, number, number, number];
-export type Reader = "sarvam" | "nvidia-super-vl" | "gemini-flash" | "nvidia-mistral";
+export type Reader = "sarvam" | "nvidia-super-vl" | "gemini-flash" | "nvidia-mistral" | "sarvam-deepseek";
 export type Candidate = { field: Field; value: string; quote: string; box: Box | null };
 export type PageRead = {
   reader: Reader; model: string; page: number; transcript: string; candidates: Candidate[]; protocol?: string;

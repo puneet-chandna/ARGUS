@@ -19,7 +19,7 @@ Set these values in `.env`:
 
 - `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` from the same Supabase project. The secret stays on the server.
 - `ARGUS_PUBLIC_ORIGIN=http://localhost:3000` for local use.
-- `NVIDIA_API_KEY` for the independent vision reader and `SARVAM_API_KEY` for the primary OCR reader. Optional fallbacks and page limits are listed in [.env.example](../.env.example). Provider access and credits must cover the calls you authorize.
+- `NVIDIA_API_KEY` for the independent vision reader and `SARVAM_API_KEY` for the primary OCR reader. If NVIDIA is unavailable, the independent lane can use `deepseekv4.1-flash-1017` through Sarvam with the same Sarvam key. Each model retains its own evidence identity. Both Sarvam routes require account credits; HTTP 402 means billing/quota must be restored. Optional fallbacks and page limits are listed in [.env.example](../.env.example).
 
 In Supabase Auth, allow the app origin and its `/auth/confirm` redirect. Create a reviewer through the app's sign-up flow or Supabase Auth. For production mode, run:
 
@@ -49,6 +49,35 @@ npm run test:e2e
 ```
 
 Run `npx playwright install chromium` if the browser is missing. OCR unit tests use stubbed responses. Live-provider verification requires separate authorization and available provider credits; a passing local suite does not establish live-provider or hosted deployment behavior.
+
+### Runtime coverage
+
+With the four `ARGUS_TEST_*` variables above set to the disposable local stack,
+run `npm run test:coverage`. It builds and starts its own production app at
+`ARGUS_TEST_URL`; that port must be free. The command combines unit, database/API
+and Chromium coverage and fails unless overall line coverage is **above 80%**.
+It forces the app to use that local database and disables live OCR credentials.
+
+The report includes every runtime `.ts`/`.tsx` file under `app/` and `lib/`,
+including untested files. Pure type declarations, tests, build/test tooling,
+third-party dependencies and static assets are outside the runtime denominator.
+Branch, function and statement coverage are reported separately. Read
+`.local/coverage/report/index.html` or `coverage-report.json` for file-level gaps.
+Source maps are enabled only for this local coverage build; normal production
+builds keep browser source maps off.
+
+### Known source limits
+
+Go Digit's `4W New Business 1+3!B2:I3` labels CD2 payouts but does not establish
+the OD/TP component premium basis. Argus leaves those component rates unresolved;
+it does not apply a package percentage to OD or TP by assumption.
+
+Tata's `General Guidelines!C10` requires the relevant RTO cluster. Unlisted
+office-to-city mappings and missing vehicle Type mappings remain grid blockers.
+They are reported as Needs review, with the available source citations, rather
+than treated as documented exclusions. When SATP Type rows disagree, the trace
+cites their competing payout cells. A genuine source exclusion still produces
+Unsupported; an explicitly applicable zero rate remains `0%`.
 
 ## Deploy
 

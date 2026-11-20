@@ -150,6 +150,7 @@ export function extract(
       }
 
       let failure = "cloud_not_authorized";
+      const attempts: Partial<Record<Reader, string>> = {};
       for (const reader of lane) {
         try {
           const hit = await cached(reader, number, image);
@@ -160,6 +161,7 @@ export function extract(
           }
         } catch (error) {
           failure = errorCode(error);
+          attempts[reader] = failure;
         }
         if (!allowCloud) continue;
         if (deadline.aborted) {
@@ -173,6 +175,7 @@ export function extract(
         const priorFailure = halted.get(reader);
         if (priorFailure) {
           failure = priorFailure;
+          attempts[reader] = failure;
           continue;
         }
         try {
@@ -191,12 +194,13 @@ export function extract(
         } catch (error) {
           failure = errorCode(error);
           if (reader === "sarvam" && failure === "ocr_deadline" && !deadline.aborted) failure = "sarvam_job_timeout";
+          attempts[reader] = failure;
           const counts = failedAttempts[reader] ??= {};
           counts[failure] = (counts[failure] ?? 0) + 1;
           if (HALT.has(failure)) halted.set(reader, failure);
         }
       }
-      (failures[number] ??= {})[lane[0]] = failure;
+      Object.assign(failures[number] ??= {}, Object.keys(attempts).length ? attempts : { [lane[0]]: failure });
     }
 
     async function readPages() {

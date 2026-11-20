@@ -5,6 +5,7 @@ const config: NextConfig = {
   experimental: { useTypeScriptCli: true },
   poweredByHeader: false,
   agentRules: false,
+  productionBrowserSourceMaps: process.env.ARGUS_COVERAGE === "1",
 };
 
 export default config;
