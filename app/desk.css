@@ -1,6 +1,3 @@
-.site-nav { display: flex; align-items: center; gap: clamp(10px, 3vw, 30px); margin-inline-start: auto; }
-.site-nav > a:not(.button) { color: var(--muted); font-size: .875rem; text-decoration: none; }
-.site-nav > a:not(.button):hover { color: var(--ink); }
 .session-loading { margin: 72px auto; text-align: center; }
 .auth-handoff {
   position: fixed;
@@ -25,7 +22,7 @@
   .auth-handoff { display: none; }
 }
 
-/* The landing and sign-in pages continue to inherit the dark theme. */
+/* Signed-in workspace palette. */
 .app-frame[data-view="workspace"] {
   color-scheme: light;
   --bg-canvas: light-dark(var(--neutral-50), var(--neutral-950));

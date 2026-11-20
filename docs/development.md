@@ -18,7 +18,7 @@ Create a Supabase project with Auth and Storage enabled. Apply the SQL files in 
 Set these values in `.env`:
 
 - `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` from the same Supabase project. The secret stays on the server.
-- `ARGUS_PUBLIC_ORIGIN=http://localhost:3000` for local use.
+- Set `ARGUS_PUBLIC_ORIGIN` to the exact browser origin if you want to pin it. Leave it empty for `npm run dev` to use the loopback hostname and port you open. For a local HTTP production build, set it to the browser origin so session cookies use the local scheme.
 - `NVIDIA_API_KEY` for the independent vision reader and `SARVAM_API_KEY` for the primary OCR reader. If NVIDIA is unavailable, the independent lane can use `deepseekv4.1-flash-1017` through Sarvam with the same Sarvam key. Each model retains its own evidence identity. Both Sarvam routes require account credits; HTTP 402 means billing/quota must be restored. Optional fallbacks and page limits are listed in [.env.example](../.env.example).
 
 In Supabase Auth, allow the app origin and its `/auth/confirm` redirect. Create a reviewer through the app's sign-up flow or Supabase Auth. For production mode, run:

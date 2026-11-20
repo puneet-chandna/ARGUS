@@ -1,8 +1,11 @@
+"use client";
+
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, KeyboardEvent } from "react";
 import { commissionLabel, type Preferences } from "../lib/profile-settings";
 import { ExportButton } from "./profile-export-button";
+import { CitationChip } from "./citation-chip";
 import { readerNotice } from "./ocr";
 import { confirmationError, conflictFields, previousPolicySource, requiredReviewFields } from "../lib/review-fields";
 import type { RunProgress } from "../lib/progress";
@@ -147,12 +150,13 @@ function Citation({ source, pdf, showFile = true, highlight }: { source: Source;
       ? `${source.sheet}${source.cells ? `!${source.cells}` : ""}`
       : `${source.page ? `Page ${source.page} · ` : ""}${source.row}`;
     return <span className="run-grid-citation">
-      <span className={highlight ? "run-location cited-cell" : "run-location"}>{location}</span>
+      <CitationChip label={location.replaceAll(" — ", " · ")} source={`${source.file} · ${location}`}
+        className={highlight ? "run-location cited-cell" : "run-location"} />
       {source.url?.startsWith("https://") && <a href={source.url} target="_blank" rel="noreferrer">Open source</a>}
       {showFile && <span>{source.file}</span>}
     </span>;
   }
-  if (source.page && !pdf) return <span>Policy page {source.page}</span>;
+  if (source.page && !pdf) return <span>{source.file} · Page {source.page}</span>;
   if (source.page) return <a className="run-policy-link" href={`${pdf}#page=${source.page}`} target="_blank" rel="noreferrer"
     aria-label={`Open ${source.file}, page ${source.page}, in a new tab`}>Policy page {source.page}</a>;
   return <span>{source.file}</span>;
@@ -578,17 +582,19 @@ function Trace({ steps, pdf }: { steps: Report["trace"]; pdf: string }) {
 
 type Panel = "trace" | "facts";
 
-export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
+type RunResultProps = {
   run: Run;
-  working: boolean;
   preferences?: Preferences;
-  onProcess: () => Promise<void>;
-  onConfirm: (value: ReviewSubmission) => Promise<void>;
-}) {
+} & (
+  | { readOnly: true; working?: never; onProcess?: never; onConfirm?: never }
+  | { readOnly?: false; working: boolean; onProcess: () => Promise<void>; onConfirm: (value: ReviewSubmission) => Promise<void> }
+);
+
+export function RunResult({ run, working = false, onProcess, onConfirm, preferences, readOnly }: RunResultProps) {
   const baseId = useId();
   const [panel, setPanel] = useState<Panel>("trace");
   const tabButtons = useRef<Partial<Record<Panel, HTMLButtonElement>>>({});
-  const pdf = run.pdf_deleted_at || run.pdf_cleanup_pending ? "" : `/api/runs/${run.id}/pdf`;
+  const pdf = readOnly || run.pdf_deleted_at || run.pdf_cleanup_pending ? "" : `/api/runs/${run.id}/pdf`;
   const report = run.result;
   const status = report?.status ?? (run.status === "processing" ? "failed" : run.status);
   const seconds = Math.round((run.duration_ms ?? 0) / 1000);
@@ -602,7 +608,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
   const traceStart = report?.rating_trace_start ?? 0;
   const decisions = report?.trace.slice(traceStart) ?? [];
   const policyTrace = report?.trace.slice(0, traceStart) ?? [];
-  const cited = decisions.findLast(step => step.sources.some(gridSource))?.sources.find(gridSource);
+  const cited = decisions.findLast(step => step.sources.some(gridSource))?.sources.findLast(gridSource);
   const [reviewQueue, setReviewQueue] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Clarification>>({});
   const [confirmationMessage, setConfirmationMessage] = useState("");
@@ -658,7 +664,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
       {!run.deleting_at && pdf && <a className="button secondary run-open-original" href={pdf} target="_blank" rel="noreferrer" aria-label="Open original PDF in a new tab">
         Open original PDF
       </a>}
-      {report && !run.deleting_at && <ExportButton type="run" runId={run.id} />}
+      {report && !readOnly && !run.deleting_at && <ExportButton type="run" runId={run.id} />}
     </header>
     {(run.pdf_deleted_at || run.pdf_cleanup_pending) && <p className="notice">
       {run.pdf_deleted_at ? "The original PDF was deleted after analysis." : "The original PDF is pending deletion."} Policy facts and rate evidence are still available.
@@ -682,7 +688,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
       </section>
       {confirmationMessage && <p className="review-confirmed" role="status">{confirmationMessage}</p>}
       {run.status === "complete" && run.error && <p className="notice" role="status">{run.error}</p>}
-      {run.can_retry_ocr && notice && <div className="run-notice">
+      {onProcess && run.can_retry_ocr && notice && <div className="run-notice">
         <p>{notice}</p>
         <button type="button" className="button secondary" onClick={onProcess} disabled={working}>Retry OCR from saved PDF</button>
       </div>}
@@ -715,7 +721,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
         <summary>OCR details</summary>
         <p>{notice}</p>
       </details>}
-      {pdf && reviewQueue.length > 0 && <ReviewDesk key={run.revision} fields={reviewQueue} required={required} conflicts={conflicts} drafts={drafts}
+      {onConfirm && pdf && reviewQueue.length > 0 && <ReviewDesk key={run.revision} fields={reviewQueue} required={required} conflicts={conflicts} drafts={drafts}
         report={report} run={run} pdf={pdf} working={working} onDraft={answer => setDrafts(current => ({ ...current, [answer.field]: answer }))}
         onClose={() => setReviewQueue([])} onConfirm={async value => {
           await onConfirm(value);
@@ -757,7 +763,7 @@ export function RunResult({ run, working, onProcess, onConfirm, preferences }: {
     </> : <div className="run-job">
       <div>
         <p>{run.error || "The original PDF is saved. You can resume analysis from this run."}</p>
-        {run.status !== "complete" && <button type="button" className="button primary" onClick={onProcess} disabled={working}>
+        {onProcess && run.status !== "complete" && <button type="button" className="button primary" onClick={onProcess} disabled={working}>
           {["failed", "cancelled"].includes(status) ? "Retry analysis" : "Resume analysis"}
         </button>}
       </div>

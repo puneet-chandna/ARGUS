@@ -1,10 +1,10 @@
-import { configuredOrigin } from "../../../lib/http.ts";
+import { requestOrigin } from "../../../lib/http.ts";
 import { NextResponse } from "next/server";
 import { authClient } from "../../../lib/supabase.ts";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const target = new URL("/workspace", configuredOrigin() || url.origin);
+  const target = new URL("/workspace", requestOrigin(request));
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   try {

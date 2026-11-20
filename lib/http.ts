@@ -15,12 +15,26 @@ export function configuredOrigin() {
   return process.env.ARGUS_PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL;
 }
 
+export function requestOrigin(request: Request) {
+  const configured = configuredOrigin();
+  if (configured) return new URL(configured).origin;
+
+  const url = new URL(request.url);
+  const host = request.headers.get("host");
+  // Next can use the listener hostname in request.url. Only recover loopback aliases on the same port.
+  if (host && /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(host) &&
+      ["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"].includes(url.hostname)) {
+    const browser = URL.parse(`${url.protocol}//${host}`);
+    if (browser && browser.port === url.port) return browser.origin;
+  }
+  return url.origin;
+}
+
 export function endpoint<Args extends unknown[]>(handler: (request: Request, ...args: Args) => Promise<Response>) {
   return async (request: Request, ...args: Args) => {
     try {
       if (request.method !== "GET" && request.method !== "HEAD") {
-        const origin = configuredOrigin() || new URL(request.url).origin;
-        if (request.headers.get("origin") !== origin) throw new HttpError(403, "Origin rejected.");
+        if (request.headers.get("origin") !== requestOrigin(request)) throw new HttpError(403, "Origin rejected.");
       }
       return await handler(request, ...args);
     } catch (error) {

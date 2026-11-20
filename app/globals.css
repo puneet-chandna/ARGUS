@@ -23,7 +23,7 @@
   --feedback-duration: 150ms;
   --reveal-duration: 300ms;
   --settle: cubic-bezier(.16, 1, .3, 1);
-  --font: "Instrument Sans Variable", system-ui, sans-serif;
+  --font: var(--instrument-sans), system-ui, sans-serif;
   background: var(--canvas);
   color: var(--ink);
   font: 16px/1.5 var(--font);
@@ -127,4 +127,38 @@ input:not([type="checkbox"]), select {
 @media (prefers-reduced-motion: reduce) {
   .button { transition: none; }
   .button:active:not(:disabled) { transform: none; }
+}
+
+.citation-copy { position: relative; display: inline-flex; width: fit-content; max-width: 100%; }
+.citation-copy-button {
+  display: inline-block;
+  min-width: 24px;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 1px rgb(255 255 255 / .05);
+  background: transparent;
+  color: inherit;
+  font: 13px/1.35 ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  overflow-wrap: anywhere;
+  transition: transform 100ms ease-out;
+}
+.citation-copy-button:hover { text-decoration: underline; text-underline-offset: .23em; }
+.citation-copy-button:active { transform: scale(.98); }
+.citation-copy-feedback:not(:empty) {
+  position: absolute;
+  inset: auto auto calc(100% + 5px) 0;
+  z-index: 1;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
 }

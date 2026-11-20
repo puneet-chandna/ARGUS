@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY app ./app
 COPY lib ./lib
+COPY submission ./submission
 COPY ["assets/colout pallete and css suggestion/argus-tokens.css", "./assets/colout pallete and css suggestion/"]
 COPY next.config.ts tsconfig.json ./
 RUN npm run build

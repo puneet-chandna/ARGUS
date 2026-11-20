@@ -15,7 +15,7 @@ import { SavedRun } from "./saved-runs";
 import { Profile, ProfileAvatar } from "./profile";
 import { api, json, message, RequestError } from "./client-api";
 import { runHash as RUN_LINK, workspaceReturn, type ProfileSection, type Session } from "../lib/profile-settings";
-import { AuthEntry, Landing } from "./landing";
+import { AuthEntry } from "./auth-entry";
 import { RunSettings } from "./run-settings";
 import "./desk.css";
 import type { ReviewSubmission, Run } from "./report";
@@ -54,7 +54,7 @@ function progressFor(run: Run | null, started: number, preflight?: CacheCheck): 
   return progress as RunProgress;
 }
 
-type View = "landing" | "signin" | "workspace" | "profile";
+type View = "signin" | "workspace" | "profile";
 
 function showPath(path: string) {
   const hash = RUN_LINK.test(window.location.hash) ? window.location.hash : "";
@@ -92,7 +92,6 @@ export default function Argus({ initialView, section }: { initialView: View; sec
       setReturnTo(workspaceReturn(url.searchParams.get("next")));
     } else setReturnTo(RUN_LINK.test(url.hash) ? `/workspace${url.hash}` : "/workspace?new=1");
     if (url.searchParams.get("view") === "signin" || url.searchParams.get("auth") === "confirmation_failed") start = "signin";
-    else if (initialView === "landing" && RUN_LINK.test(url.hash)) start = "workspace";
     if (url.searchParams.get("auth") === "confirmation_failed") {
       setError("The confirmation link could not be used. If you already confirmed your email, sign in.");
       showPath("/sign-in");
@@ -101,10 +100,10 @@ export default function Argus({ initialView, section }: { initialView: View; sec
     api<Session | null>("/api/session", { signal: controller.signal }).then(result => {
       if (controller.signal.aborted || credentialsSubmitted.current) return;
       setSession(result);
-      if (start !== "landing" && !result) {
+      if (!result) {
         setView("signin");
         showPath("/sign-in");
-      } else if (result && start !== "landing" && start !== "profile") {
+      } else if (result && start !== "profile") {
         setView("workspace");
         if (url.pathname !== "/workspace") showPath("/workspace");
       }
@@ -112,10 +111,8 @@ export default function Argus({ initialView, section }: { initialView: View; sec
       if (controller.signal.aborted || credentialsSubmitted.current) return;
       if (!(error instanceof RequestError && error.status === 401)) setError(message(error));
       setSession(null);
-      if (start !== "landing") {
-        setView("signin");
-        showPath("/sign-in");
-      }
+      setView("signin");
+      showPath("/sign-in");
     });
     return () => controller.abort();
   }, [initialView]);
@@ -221,10 +218,7 @@ export default function Argus({ initialView, section }: { initialView: View; sec
             aria-controls="history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}>Saved runs</button>}
           <button type="button" className="button secondary" onClick={signOut} disabled={busy}>Sign out</button>
         </div>}
-      </> : view === "landing" && <nav className="site-nav" aria-label="Primary">
-        <a href="#worked-example">Example decision</a>
-        <a href={session ? "/workspace" : "/sign-in"} className="button secondary">{session ? "Open workspace" : "Sign in"}</a>
-      </nav>}
+      </> : null}
     </header>
     {handoff && <div className="auth-handoff" aria-hidden="true" onAnimationEnd={event => {
       if (event.target === event.currentTarget) setHandoff(false);
@@ -232,7 +226,7 @@ export default function Argus({ initialView, section }: { initialView: View; sec
       <Image src={`${monogram.src}?signin`} alt="" width={96} height={96} unoptimized loading="eager" />
     </div>}
     <main ref={main} id="main" className="shell" tabIndex={-1}>
-      {view === "landing" ? <Landing /> : isWorkspace ?
+      {isWorkspace ?
         session ? isProfile ? <Profile key={section} section={section ?? "account"} returnTo={returnTo}
           session={session} onSession={setSession} onUnauthorized={expireSession} sessionError={error} onDirty={setProfileDirty}
           onDeleted={() => expireSession("", "Your Argus account and its data were deleted.")} /> :

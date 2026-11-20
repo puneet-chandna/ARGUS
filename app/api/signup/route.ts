@@ -1,4 +1,4 @@
-import { configuredOrigin, endpoint, HttpError, json, readJson } from "../../../lib/http.ts";
+import { endpoint, HttpError, json, readJson, requestOrigin } from "../../../lib/http.ts";
 import { authClient } from "../../../lib/supabase.ts";
 
 export const POST = endpoint(async (request) => {
@@ -9,9 +9,8 @@ export const POST = endpoint(async (request) => {
     throw new HttpError(400, "Enter your email and a password between 8 and 72 characters.");
   }
   const auth = await authClient(request.headers.get("user-agent"));
-  const origin = configuredOrigin() || new URL(request.url).origin;
   const { data, error } = await auth.auth.signUp({
-    email: address, password, options: { emailRedirectTo: new URL("/auth/confirm", origin).href },
+    email: address, password, options: { emailRedirectTo: new URL("/auth/confirm", requestOrigin(request)).href },
   });
   if (error?.status === 429) throw new HttpError(429, "Too many sign-up attempts. Try again later.");
   if (error?.code === "signup_disabled") throw new HttpError(403, "Account creation is disabled. Ask the workspace owner for access.");
