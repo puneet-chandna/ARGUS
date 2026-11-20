@@ -406,15 +406,99 @@ test("Tata AIG withholds TP when RTO jurisdiction contradicts the policy locatio
   assert.equal(rate({ ...facts, rto: "HR26", rto_location: "Haryana" }).tp.rate, "0");
 });
 
-test("Tata package mapping gaps stay unresolved rather than becoming coverage exclusions", () => {
-  const result = rate({ insurer: "Tata AIG", business_type: "renewal", policy_type: "Private Car Package Policy",
-    rto: "MH01", rto_location: "Mumbai", make: "Maruti", model: "Swift", fuel: "petrol", start_date: "2026-03-25" });
+const tataPackage = {
+  insurer: "Tata AIG", business_type: "new", policy_type: "Private Car Package Policy",
+  rto: "AP02", rto_location: "Andhra Pradesh", fuel: "diesel", start_date: "2026-03-25",
+};
+
+test("Tata package rates OD when all seven Types agree and keeps the TP coverage gap", () => {
+  const result = rate(tataPackage);
+  assert.equal(result.status, "unsupported");
+  assert.deepEqual([result.od.status, result.od.applicable, result.od.rate], ["resolved", true, "18"]);
+  assert.deepEqual([result.tp.status, result.tp.applicable, result.tp.rate], ["unsupported", true, null]);
+  assertSource(result, "Pvtcar", "N5");
+  assertSource(result, "Pvtcar", "N6, N14, N22, N30, N38, N46, N54");
+  assertSource(result, "CV RTO Mapping", "A6:C6");
+  assertSource(result, "Pvtcar", "F2:F3");
+  assertSource(result, "General Guidelines", "C5");
+  assertSource(result, "General Guidelines", "C11:C17");
+  assert.ok(result.trace.some(({ step }) => /GWP.*increment/i.test(step)));
+});
+
+test("Tata package withholds OD when the selected column has differing Type rates", () => {
+  const result = rate({ ...tataPackage, rto: "DL9C", rto_location: "Delhi" });
   assert.equal(result.status, "ambiguous");
   assert.equal(result.od.rate, null);
   assert.equal(result.tp.rate, null);
-  assert.match(result.od.reason, /lacks.*mappings/);
+  assert.equal(result.tp.status, "unsupported");
+  assert.match(result.od.reason, /vehicle Type/i);
   assert.ok(result.blockers.every(blocker => blocker.kind === "grid" && !blocker.fields.length));
   assertSource(result, "General Guidelines", "C10");
+  assertSource(result, "General Guidelines", "C7");
+  assertSource(result, "Pvtcar", "F2");
+  assertSource(result, "Pvtcar", "V6");
+  assertSource(result, "Pvtcar", "V30");
+});
+
+test("Tata package checks the policy geography, date and private-car classification before rating OD", () => {
+  for (const [changes, status, reviewFields] of [
+    [{ rto_location: "" }, "ambiguous", ["rto_location"]],
+    [{ rto_location: "Kakinada" }, "ambiguous", undefined],
+    [{ rto: "" }, "ambiguous", ["rto"]],
+    [{ rto: "KA01", rto_location: "KA1" }, "ambiguous", undefined],
+    [{ rto: "DL9C" }, "ambiguous", ["rto", "rto_location"]],
+    [{ start_date: "" }, "ambiguous", ["start_date"]],
+    [{ start_date: "2025-10-31" }, "unsupported", undefined],
+    [{ rto: "DL9C", rto_location: "Delhi", start_date: "2026-04-01" }, "ambiguous", undefined],
+    [{ policy_type: "Package Policy" }, "ambiguous", ["vehicle_class"]],
+  ] as const) {
+    const result = rate({ ...tataPackage, ...changes });
+    assert.deepEqual([result.od.status, result.od.rate, result.review_fields], [status, null, reviewFields]);
+  }
+});
+
+test("Tata package withholds state rates when separate city columns leave the RTO cluster unverified", () => {
+  for (const rto of ["AP16", "AP31", "AP39"]) {
+    const result = rate({ ...tataPackage, rto });
+    assert.deepEqual([result.od.status, result.od.rate], ["ambiguous", null], rto);
+    assertSource(result, "Pvtcar", "BM5:BN5");
+  }
+  const telangana = rate({ ...tataPackage, rto: "TG09", rto_location: "Telangana" });
+  assert.deepEqual([telangana.od.status, telangana.od.rate], ["ambiguous", null]);
+  assertSource(telangana, "Pvtcar", "Z5");
+});
+
+test("Tata stand-alone OD respects NCB when it changes a Type-invariant rate", () => {
+  const facts = { ...tataPackage, business_type: "renewal", policy_type: "Private Car SAOD" };
+  const andhra = rate(facts);
+  assert.equal(andhra.status, "resolved");
+  assert.equal(andhra.od.rate, "17.5");
+  assert.deepEqual([andhra.tp.status, andhra.tp.applicable, andhra.tp.rate], ["inapplicable", false, null]);
+  assertSource(andhra, "Pvtcar", "G66:L66");
+  assertSource(andhra, "Pvtcar", "G261:L261");
+
+  const delhi = { ...facts, rto: "DL9C", rto_location: "Delhi", fuel: "petrol" };
+  assert.deepEqual(rate(delhi).review_fields, ["current_ncb"]);
+  assert.equal(rate({ ...delhi, current_ncb: "0" }).od.rate, "15");
+  const positiveNcb = rate({ ...delhi, current_ncb: "25" });
+  assert.equal(positiveNcb.od.rate, "19.5");
+  assert.ok(positiveNcb.trace.some(step => step.policy_fields?.includes("current_ncb")));
+
+  const chhattisgarh = rate({ ...facts, rto: "CG04", rto_location: "Chhattisgarh", current_ncb: "25" });
+  assert.deepEqual([chhattisgarh.od.status, chhattisgarh.od.rate], ["ambiguous", null]);
+  assertSource(chhattisgarh, "Pvtcar", "R66");
+  assertSource(chhattisgarh, "Pvtcar", "R67");
+});
+
+test("Tata package TP remains a documented gap while OD awaits a required policy fact", () => {
+  const result = rate({ insurer: "Tata AIG", policy_type: "Private Car Package Policy" });
+  assert.equal(result.od.status, "ambiguous");
+  assert.equal(result.tp.status, "unsupported");
+  assert.equal(result.tp.applicable, true);
+  assert.equal(result.tp.rate, null);
+  assert.deepEqual(result.review_fields, ["start_date"]);
+  assert.ok(result.blockers.some(blocker => blocker.component === "tp" && blocker.kind === "grid" &&
+    blocker.sources.some(source => source.cells === "C7")));
 });
 
 test("Tata differing SATP Type rates require grid clarification and cite the competing payout cells", () => {

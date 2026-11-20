@@ -95,6 +95,54 @@ test("saved-run settings recover from a failed save and persist rename, pin and 
   expect((await page.request.get(`/api/runs/${id}/pdf`)).status()).toBe(404);
 });
 
+test("failed uploads retain the selected PDF and consent so the reviewer can retry safely", async ({ page, reviewer }) => {
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  const picker = page.locator('input[type="file"]');
+  await picker.setInputFiles({ name: "empty.pdf", mimeType: "application/pdf", buffer: Buffer.alloc(0) });
+  await expect(page.getByText("Choose a nonempty PDF up to 20 MiB.", { exact: true })).toBeVisible();
+  const bytes = syntheticPdf("Synthetic upload recovery policy");
+  await picker.setInputFiles({ name: "recovery.pdf", mimeType: "application/pdf", buffer: bytes });
+  await expect(page.locator(".cache-chip-row .cache-chip")).toBeVisible();
+  const consent = page.getByRole("checkbox");
+  await consent.check();
+  await page.route("**/api/runs", route => route.request().method() === "POST"
+    ? route.fulfill({ status: 503, json: { error: "Temporary upload failure" } }) : route.continue());
+  await page.getByRole("button", { name: "Analyze policy", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Temporary upload failure" })).toBeVisible();
+  await expect(consent).toBeChecked();
+  await expect(page.getByText("recovery.pdf", { exact: true })).toBeVisible();
+  await page.unroute("**/api/runs");
+  await page.getByRole("button", { name: "Analyze policy", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "recovery.pdf", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Broker commission", exact: true })).toBeVisible();
+  const id = new URL(page.url()).hash.slice(1);
+  const original = await page.request.get(`/api/runs/${id}/pdf`);
+  expect(await original.body()).toEqual(bytes);
+  const rows = await reviewer.db.from("argus_runs").select("id").eq("owner_id", reviewer.id);
+  expect(rows.error).toBeNull();
+  expect(rows.data).toHaveLength(1);
+});
+
+test("an expired run request returns to sign-in and the original remains available after signing back in", async ({ page, reviewer }) => {
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  const bytes = syntheticPdf("Synthetic session recovery policy");
+  await uploadPdf(page, "session-recovery.pdf", bytes);
+  const id = new URL(page.url()).hash.slice(1);
+  await page.route(`**/api/runs/${id}`, route => route.request().method() === "GET"
+    ? route.fulfill({ status: 401, json: { error: "Session expired." } }) : route.continue());
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Sign in to Argus", exact: true })).toBeVisible();
+  await page.unroute(`**/api/runs/${id}`);
+  await signIn(page, reviewer);
+  await page.goto(`/workspace#${id}`);
+  await expect(page.getByRole("heading", { name: "session-recovery.pdf", exact: true })).toBeVisible();
+  const original = await page.request.get(`/api/runs/${id}/pdf`);
+  expect(original.status()).toBe(200);
+  expect(await original.body()).toEqual(bytes);
+});
+
 test("security validates password confirmation and saves a verified password through the UI", async ({ page, reviewer }) => {
   await page.goto("/sign-in");
   await signIn(page, reviewer);
@@ -212,6 +260,44 @@ test("the original Tata classification stays unresolved and its evidence and PDF
   expect(stored.data?.result.status).toBe("ambiguous");
   expect(stored.data?.result.fields).toEqual(saved.run.result.fields);
   expect(stored.data?.revision).toBe(saved.run.revision + 1);
+});
+
+test("a source-backed Tata Type-invariant package shows OD and its separate TP gap in the browser", async ({ page, reviewer }) => {
+  const name = "tata-package-invariant.pdf";
+  const inputs: PageRead["candidates"] = [
+    { field: "insurer", value: "Tata AIG General Insurance Company Limited", quote: "Tata AIG General Insurance Company Limited", box: null },
+    { field: "policy_type", value: "Private Car Package Policy", quote: "Private Car Package Policy", box: null },
+    { field: "rto", value: "AP02", quote: "RTO: AP02", box: null },
+    { field: "rto_location", value: "Andhra Pradesh", quote: "RTO Location: Andhra Pradesh", box: null },
+    { field: "fuel", value: "Diesel", quote: "Fuel Type: Diesel", box: null },
+    { field: "business_type", value: "New", quote: "Business Type: New", box: null },
+    { field: "start_date", value: "2026-03-25", quote: "Policy Start Date: 2026-03-25", box: null },
+  ];
+  const bytes = syntheticPdf(...inputs.map(input => input.quote));
+  const readings: PageRead[] = inputs.flatMap((candidate, index) => (["sarvam", "nvidia-super-vl"] as const).map(reader => ({
+    reader, model: "stub", page: index + 1, transcript: candidate.quote, candidates: [candidate],
+  })));
+  expect((await reviewer.db.from("argus_ocr_cache").insert({ owner_id: reviewer.id, checksum: checksum(bytes), profile: verifiedOcrProfile(),
+    grounded_text: [], extraction: { filename: name, checksum: checksum(bytes), extraction_version: EXTRACTION_VERSION,
+      reader_failures: {}, clarifications: [], fields: decide(name, readings) },
+  })).error).toBeNull();
+  await page.goto("/sign-in");
+  await signIn(page, reviewer);
+  await uploadPdf(page, name, bytes);
+  const commission = page.getByRole("region", { name: "Broker commission" });
+  await expect(commission).toContainText("18.0%");
+  await expect(commission).toContainText("Unsupported");
+  await expect(commission).toContainText("base on OD premium");
+  await page.getByRole("button", { name: "View decision evidence", exact: true }).click();
+  await expect(page.getByText("Pvtcar!N6, N14, N22, N30, N38, N46, N54", { exact: true })).toBeVisible();
+  const id = new URL(page.url()).hash.slice(1);
+  const result = (await runStore(reviewer.db, reviewer.id).get(id)).result!;
+  expect(result.od).toMatchObject({ status: "resolved", rate: "18", applicable: true });
+  expect(result.tp).toMatchObject({ status: "unsupported", rate: null, applicable: true });
+  expect(result.review_fields).toBeUndefined();
+  await page.reload();
+  await expect(commission).toContainText("18.0%");
+  expect(await page.request.get(`/api/runs/${id}/pdf`).then(response => response.body())).toEqual(bytes);
 });
 
 test("an unseen HDFC package saves its confirmed title before eligible GWP is available", async ({ page, reviewer }) => {

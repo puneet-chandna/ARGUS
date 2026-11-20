@@ -66,6 +66,36 @@ Branch, function and statement coverage are reported separately. Read
 Source maps are enabled only for this local coverage build; normal production
 builds keep browser source maps off.
 
+### Verification snapshot: 20 November 2026
+
+The latest local production build passed 105 unit tests and five integration
+tests against a disposable Supabase instance. The complete 22-test browser suite
+passed, followed by one additional Tata package browser test run separately.
+Production build, typecheck, all 10 original corpus checks and the Tata importer
+check also passed.
+
+Combined native V8 coverage across all 57 runtime TypeScript/TSX files was
+**81.91% lines**, 87.41% functions, 74.20% statements and 69.09% branches.
+The report combines the full coverage suite and the additional browser case
+against the same instrumented build. Automated OCR tests use stubbed readers
+or saved readings; live-provider checks are separate from this coverage.
+
+All four original synthetic policies also completed fresh live OCR through the
+upload UI, with cloud consent and source-cited corrections saved through the
+reviewer flow. Their final component decisions match the [sample results](../README.md#sample-results).
+All 60 live outcome, persistence and access-isolation checks passed, including
+byte-identical originals across refresh, a new browser context, sign-out/sign-in
+and a local production-server restart. Original policy pages and grid citations
+were checked, and all four final result and evidence screens were visually
+inspected. One HDFC page recorded an unconfirmed Sarvam quote and an NVIDIA
+Mistral timeout; the analysis completed with its review path available. No quota
+failure recurred in that batch.
+
+This snapshot verifies the local build. Before submission, deploy the same
+revision and verify an unseen synthetic PDF on the hosted app, including saved
+PDF/result access across an actual container restart or replacement. Availability
+checks on an older hosted revision do not establish acceptance of this build.
+
 ### Known source limits
 
 Go Digit's `4W New Business 1+3!B2:I3` labels CD2 payouts but does not establish
@@ -75,9 +105,23 @@ it does not apply a package percentage to OD or TP by assumption.
 Tata's `General Guidelines!C10` requires the relevant RTO cluster. Unlisted
 office-to-city mappings and missing vehicle Type mappings remain grid blockers.
 They are reported as Needs review, with the available source citations, rather
-than treated as documented exclusions. When SATP Type rows disagree, the trace
+than treated as documented exclusions. When Type rows disagree, the trace
 cites their competing payout cells. A genuine source exclusion still produces
 Unsupported; an explicitly applicable zero rate remains `0%`.
+
+Package/SAOD OD can be returned when the documented geography selects a column
+and every remaining Type/add-on/NCB alternative gives the same base rate. A
+verified current NCB can select its labelled branch; unknown add-ons must agree
+across both branches. The trace identifies the base rate, GWP increments and
+override order. Package TP remains unsupported because the source specifies OD
+premium only. Different Type rates still need insurer mapping evidence.
+
+To reproduce the Tata portion of the checked-in runtime table, install the
+optional development dependency `openpyxl` for Python 3 and run
+`python3 scripts/import-tata-card.py --check`. Omitting `--check` regenerates only
+Tata rows and the shared card version, preserving original worksheet coordinates
+and the other insurers' tables. The importer checks the original workbook
+against the pinned manifest before reading it.
 
 ## Deploy
 

@@ -36,7 +36,7 @@ A motor policy PDF lists facts. Examples are the insurer, the vehicle, the fuel 
 
 An insurer publishes a rate card. The rate card maps those facts to a commission rate.
 
-Argus reads the policy and applies the rate card. It returns two rates: Own Damage (OD) and Third Party (TP). Each rate has a trace. The trace lists every step and its source.
+Argus reads the policy and applies the rate card. It returns separate decisions for Own Damage (OD) and Third Party (TP), with percentage rates where the evidence supports them. Each decision has a trace that lists every step and its source.
 
 ### 01 · Every rate has a source
 
@@ -68,14 +68,14 @@ Argus sends a PDF to a cloud OCR service only after you approve it. Approve each
 | --- | --- | --- |
 | **Resolved** | Argus found every applicable rate. Each step has a source. | Read the trace. Use the rate. |
 | **Needs review** | The evidence is unclear or conflicts. | Check the cited sources. |
-| **Unsupported** | The rate card has no safe rule for this policy. | Do not use a rate. |
+| **Unsupported** | The supplied rate card documents a coverage gap or exclusion. | Read the reason and any separately supported component. |
 
 ## How it works
 
 ```mermaid
 flowchart LR
     A["Policy PDF"] --> B{"Read before?"}
-    B -- "Yes" --> D["Use cached text"]
+    B -- "Yes" --> D["Reuse verified readings"]
     B -- "No" --> C["Live OCR (you approve)"]
     C --> D
     D --> E["Extract policy facts"]
@@ -102,7 +102,7 @@ When an unread policy fact blocks a rate and its likely page is known, Argus can
 
 ## Sample results
 
-These four traces replay source-reviewed facts from the supplied policies through the app’s rating engine.
+These four traces replay source-reviewed facts from the supplied policies through the app’s rating engine. Fresh live OCR runs on **20 November 2026**, followed by source-cited reviewer confirmations where needed, produced the same component decisions and blockers shown below.
 
 | Policy | Result | Trace |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ These four traces replay source-reviewed facts from the supplied policies throug
 | Reliance, comprehensive | Needs review. The workbook does not establish OD applicability on the policy start date. Package TP is unsupported. | [JSON](submission/pvt-car-comprehensive-reliance.json) |
 | Tata AIG, stand-alone TP | Needs review. The printed body type does not establish private-car classification. | [JSON](submission/pvt-car-satp-tata-aig.json) |
 
-
+The live checks verified saved results and original PDF bytes across refresh, a new browser context, sign-out/sign-in and a local production-server restart. See the [verification snapshot](docs/development.md#verification-snapshot-20-november-2026) for test results, coverage and remaining hosted acceptance checks.
 
 ## Data and storage
 

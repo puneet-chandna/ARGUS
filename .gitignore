@@ -20,6 +20,7 @@
 /tests/
 /requirements*.txt
 /scripts/*.py
+!/scripts/import-tata-card.py
 
 # Generated files
 /node_modules/

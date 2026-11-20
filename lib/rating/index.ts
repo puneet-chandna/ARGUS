@@ -92,7 +92,7 @@ export function rate(facts: Facts, pendingDates: readonly string[] = []): Rating
     ];
   });
   return {
-    ...parts, blockers, status, rule_version: (insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v7` :
+    ...parts, blockers, status, rule_version: (insurer === "tata-aig" ? `${RATE_CARD_VERSION}-tata-rto-v8` :
       insurer === "hdfc-ergo" ? `${RATE_CARD_VERSION}-hdfc-od-v7` :
       insurer === "godigit" ? `${RATE_CARD_VERSION}-digit-age-v5` :
       insurer === "reliance-indusind" ? `${RATE_CARD_VERSION}-reliance-v5` : RATE_CARD_VERSION) + "-evidence-v3",
