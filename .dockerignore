@@ -8,6 +8,8 @@
 !app/**
 !lib/
 !lib/**
+!submission/
+!submission/*.json
 !assets/
 !assets/colout pallete and css suggestion/
 !assets/colout pallete and css suggestion/argus-tokens.css
